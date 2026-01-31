@@ -14,13 +14,16 @@ function App() {
   const [showUpload, setShowUpload] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importTableType, setImportTableType] = useState(null);
+  const [sellers, setSellers] = useState([]);
   const [filters, setFilters] = useState({
     platform: '',
-    decision: ''
+    decision: '',
+    seller: ''
   });
 
   useEffect(() => {
     //fetchDecisions();
+    fetchSellers();
   }, []);
 
   useEffect(() => {
@@ -33,6 +36,7 @@ function App() {
       setError(null);
       const params = new URLSearchParams();
       if (filters.platform) params.append('platform', filters.platform);
+      if (filters.seller) params.append('seller_id', filters.seller);
       if (filters.decision !== '') params.append('decision', filters.decision);
       
       const response = await axios.get(`${API_BASE_URL}/api/decisions?${params}`);
@@ -45,11 +49,25 @@ function App() {
     }
   };
 
+  const fetchSellers = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/sellers`);
+      setSellers(response.data?.sellers || []);
+    } catch (err) {
+      console.error('Error fetching sellers:', err);
+      setSellers([]);
+    }
+  };
+
   const applyFilters = () => {
     let filtered = [...decisions];
     
     if (filters.platform) {
       filtered = filtered.filter(d => d.platform_name === filters.platform);
+    }
+    
+    if (filters.seller) {
+      filtered = filtered.filter(d => String(d.seller_id) === String(filters.seller));
     }
     
     if (filters.decision !== '') {
@@ -71,7 +89,9 @@ function App() {
     try {
       setLoading(true);
       setError(null);
-      const response = await axios.post(`${API_BASE_URL}/api/decisions/run`);
+      const payload = {};
+      if (filters.seller) payload.seller_id = filters.seller;
+      const response = await axios.post(`${API_BASE_URL}/api/decisions/run`, payload);
       setSuccess(`Decision job completed: ${response.data.yes} YES, ${response.data.no} NO`);
       setTimeout(() => setSuccess(null), 5000);
       await fetchDecisions();
@@ -90,12 +110,17 @@ function App() {
 
   const handleImportSuccess = () => {
     fetchDecisions();
+    fetchSellers();
     setShowUpload(false);
   };
 
   const getUniquePlatforms = () => {
     const platforms = [...new Set(decisions.map(d => d.platform_name))];
     return platforms.filter(Boolean).sort();
+  };
+
+  const getUniqueSellers = () => {
+    return sellers.filter(Boolean);
   };
 
   const stats = {
@@ -133,6 +158,22 @@ function App() {
             {getUniquePlatforms().map(platform => (
               <option key={platform} value={platform}>
                 {platform}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label>Seller</label>
+          <select
+            name="seller"
+            value={filters.seller}
+            onChange={handleFilterChange}
+          >
+            <option value="">All Sellers</option>
+            {getUniqueSellers().map(seller => (
+              <option key={seller.seller_id} value={seller.seller_id}>
+                {seller.name}
               </option>
             ))}
           </select>
@@ -197,7 +238,7 @@ function App() {
               >
                 📤 Import Sales Data
               </button>
-              <small>Sales data (units sold, revenue)</small>
+              <small>Sales data (units sold)</small>
             </div>
 
             <div className="upload-item">
@@ -243,6 +284,17 @@ function App() {
               </button>
               <small>Product ratings and review counts</small>
             </div>
+
+            <div className="upload-item">
+              <label className="upload-label">Sellers</label>
+              <button
+                onClick={() => handleOpenImport('sellers')}
+                className="upload-btn"
+              >
+                📤 Import Sellers
+              </button>
+              <small>Seller master list by platform</small>
+            </div>
           </div>
         </div>
       )}
@@ -277,6 +329,7 @@ function App() {
                 <th>Product</th>
                 <th>SKU</th>
                 <th>Platform</th>
+                <th>Seller</th>
                 <th>Category</th>
                 <th>Decision</th>
                 <th>Reason</th>
@@ -289,6 +342,7 @@ function App() {
                   <td>{decision.product_name}</td>
                   <td>{decision.sku}</td>
                   <td>{decision.platform_name}</td>
+                  <td>{decision.seller_name || '-'}</td>
                   <td>{decision.category || '-'}</td>
                   <td>
                     <span className={`decision-badge ${decision.decision ? 'yes' : 'no'}`}>

@@ -10,7 +10,7 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
     try {
-        const { platform, decision } = req.query;
+        const { platform, decision, seller_id: sellerId, seller } = req.query;
         
         let query = supabase
             .from('decisions')
@@ -19,6 +19,11 @@ router.get('/', async (req, res) => {
                 decision,
                 reason,
                 evaluated_at,
+                seller_id,
+                sellers:sellers!inner(
+                    seller_id,
+                    name
+                ),
                 product_platforms!inner(
                     product_platform_id,
                     platform_sku,
@@ -36,6 +41,14 @@ router.get('/', async (req, res) => {
         
         if (platform) {
             query = query.eq('product_platforms.platforms.name', platform);
+        }
+        
+        if (sellerId) {
+            query = query.eq('seller_id', parseInt(sellerId, 10));
+        }
+        
+        if (seller) {
+            query = query.eq('sellers.name', seller);
         }
         
         if (decision !== undefined) {
@@ -58,6 +71,8 @@ router.get('/', async (req, res) => {
                 decision: d.decision,
                 reason: d.reason,
                 evaluated_at: d.evaluated_at,
+                seller_id: d.seller_id,
+                seller_name: d.sellers?.name,
                 product_id: pp?.products?.product_id,
                 sku: pp?.products?.sku,
                 product_name: pp?.products?.product_name,
@@ -89,14 +104,27 @@ router.get('/', async (req, res) => {
 router.get('/:productPlatformId', async (req, res) => {
     try {
         const { productPlatformId } = req.params;
+        const { seller_id: sellerId } = req.query;
         
-        const { data, error } = await supabase
+        if (!sellerId) {
+            return res.status(400).json({
+                error: 'Missing seller_id',
+                message: 'seller_id is required when fetching a specific decision'
+            });
+        }
+        
+        let query = supabase
             .from('decisions')
             .select(`
                 id,
                 decision,
                 reason,
                 evaluated_at,
+                seller_id,
+                sellers:sellers!inner(
+                    seller_id,
+                    name
+                ),
                 product_platforms!inner(
                     product_platform_id,
                     platform_sku,
@@ -111,8 +139,11 @@ router.get('/:productPlatformId', async (req, res) => {
                     )
                 )
             `)
-            .eq('product_platform_id', productPlatformId)
-            .single();
+            .eq('product_platform_id', productPlatformId);
+        
+        query = query.eq('seller_id', parseInt(sellerId, 10));
+        
+        const { data, error } = await query.single();
         
         if (error || !data) {
             return res.status(404).json({
@@ -127,6 +158,8 @@ router.get('/:productPlatformId', async (req, res) => {
             decision: data.decision,
             reason: data.reason,
             evaluated_at: data.evaluated_at,
+            seller_id: data.seller_id,
+            seller_name: data.sellers?.name,
             product_id: pp?.products?.product_id,
             sku: pp?.products?.sku,
             product_name: pp?.products?.product_name,
@@ -155,7 +188,8 @@ router.get('/:productPlatformId', async (req, res) => {
  */
 router.post('/run', async (req, res) => {
     try {
-        const result = await runDecisionJob();
+        const sellerId = req.body?.seller_id ? parseInt(req.body.seller_id, 10) : null;
+        const result = await runDecisionJob({ sellerId });
         res.json({
             success: true,
             message: 'Decision job completed',

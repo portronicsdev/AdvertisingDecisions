@@ -26,23 +26,32 @@ const generateTemplate = (tableType) => {
       filename: 'Product_Platforms_Template.xlsx',
       description: 'Link products to platforms. SKU must exist in products table.'
     },
-    'sales': {
-      headers: ['SKU', 'Platform', 'Period Start (YYYY-MM-DD)', 'Period End (YYYY-MM-DD)', 'Units Sold'],
+    'sellers': {
+      headers: ['Seller Name', 'Platform', 'Active'],
       sample: [
-        ['POR 1812', 'Amazon', '2024-01-01', '2024-01-31', 100],
-        ['POR 1813', 'Flipkart', '2024-01-01', '2024-01-31', 50],
+        ['Portronics Seller A', 'Amazon', 'true'],
+        ['Portronics Seller B', 'Amazon', 'true'],
+      ],
+      filename: 'Sellers_Template.xlsx',
+      description: 'Seller master data by platform.'
+    },
+    'sales': {
+      headers: ['SKU', 'Platform', 'Platform SKU', 'Period Start (YYYY-MM-DD)', 'Period End (YYYY-MM-DD)', 'Units Sold'],
+      sample: [
+        ['POR 1812', 'Amazon', 'B08XYZ123', '2024-01-01', '2024-01-31', 100],
+        ['POR 1813', 'Flipkart', '', "1Jan'26", '', 50],
       ],
       filename: 'Sales_Facts_Template.xlsx',
-      description: 'Sales data for products on platforms. SKU must exist in products table.'
+      description: 'Sales data. Provide SKU or Platform SKU. Use Period Start/End or a Date Report like 1Jan\'26. Seller is selected in the UI.'
     },
     'inventory': {
-      headers: ['SKU', 'Platform', 'Snapshot Date (YYYY-MM-DD)', 'Inventory Units'],
+      headers: ['SKU', 'Platform', 'Platform SKU', 'Snapshot Date (YYYY-MM-DD)', 'Inventory Units'],
       sample: [
-        ['POR 1812', 'Amazon', '2024-01-15', 200],
-        ['POR 1813', 'Flipkart', '2024-01-15', 150],
+        ['POR 1812', 'Amazon', 'B08XYZ123', '2024-01-15', 200],
+        ['POR 1813', 'Flipkart', '', "1Jan'26", 150],
       ],
       filename: 'Inventory_Facts_Template.xlsx',
-      description: 'Seller inventory levels. SKU must exist in products table.'
+      description: 'Seller inventory. Provide SKU or Platform SKU. Snapshot Date or Date Report (1Jan\'26). Seller is selected in the UI.'
     },
     'company-inventory': {
       headers: ['SKU', 'Snapshot Date (YYYY-MM-DD)', 'Inventory Units', 'Location (Optional)'],
@@ -99,8 +108,13 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
   const [errors, setErrors] = useState([]);
   const [importing, setImporting] = useState(false);
   const [warnings, setWarnings] = useState([]);
+  const [sellers, setSellers] = useState([]);
+  const [sellerId, setSellerId] = useState('');
+  const [sellersLoading, setSellersLoading] = useState(false);
+  const [sellerError, setSellerError] = useState('');
 
   const template = tableType ? generateTemplate(tableType) : null;
+  const needsSeller = tableType === 'sales' || tableType === 'inventory';
 
   // Handle escape key to close modal
   useEffect(() => {
@@ -113,6 +127,33 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [open, importing]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!needsSeller) {
+      setSellers([]);
+      setSellerId('');
+      setSellerError('');
+      return;
+    }
+
+    const fetchSellers = async () => {
+      setSellersLoading(true);
+      setSellerError('');
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/sellers`);
+        const list = response.data?.sellers || [];
+        setSellers(list);
+      } catch (err) {
+        setSellerError(err.response?.data?.message || 'Failed to load sellers');
+        setSellers([]);
+      } finally {
+        setSellersLoading(false);
+      }
+    };
+
+    fetchSellers();
+  }, [open, tableType]);
 
   if (!open || !tableType) return null;
 
@@ -164,17 +205,26 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
             platform: ['Platform'],
             platformSku: ['Platform SKU', 'ASIN']
           },
+          'sellers': {
+            sellerName: ['Seller Name'],
+            platform: ['Platform'],
+            active: ['Active']
+          },
           'sales': {
             sku: ['SKU'],
             platform: ['Platform'],
+            platformSku: ['Platform SKU', 'ASIN'],
             periodStart: ['Period Start (YYYY-MM-DD)'],
             periodEnd: ['Period End (YYYY-MM-DD)'],
+            dateReport: ['Date Report', 'Date'],
             unitsSold: ['Units Sold']
           },
           'inventory': {
             sku: ['SKU'],
             platform: ['Platform'],
+            platformSku: ['Platform SKU', 'ASIN'],
             snapshotDate: ['Snapshot Date (YYYY-MM-DD)'],
+            dateReport: ['Date Report', 'Date'],
             inventoryUnits: ['Inventory Units']
           },
           'company-inventory': {
@@ -218,8 +268,9 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
         const requiredColumns = {
           'products': ['sku'],
           'product-platforms': ['sku', 'platform'],
-          'sales': ['sku', 'platform', 'periodStart', 'periodEnd', 'unitsSold'],
-          'inventory': ['sku', 'platform', 'snapshotDate'],
+          'sellers': ['sellerName', 'platform'],
+          'sales': ['unitsSold'],
+          'inventory': ['inventoryUnits'],
           'company-inventory': ['sku', 'snapshotDate'],
           'ad-performance': ['platformSku', 'adType'],
           'ratings': ['sku', 'platform', 'snapshotDate']
@@ -231,6 +282,32 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
             missingColumns.push(col);
           }
         });
+
+        const requiresSkuOrPlatformSku = tableType === 'sales' || tableType === 'inventory';
+        if (requiresSkuOrPlatformSku) {
+          const hasSku = columns.sku !== -1;
+          const hasPlatformSku = columns.platformSku !== -1;
+          if (!hasSku && !hasPlatformSku) {
+            missingColumns.push('SKU or Platform SKU');
+          }
+        }
+        
+        if (tableType === 'sales') {
+          const hasPeriodStart = columns.periodStart !== -1;
+          const hasPeriodEnd = columns.periodEnd !== -1;
+          const hasDateReport = columns.dateReport !== -1;
+          if (!(hasPeriodStart && hasPeriodEnd) && !hasDateReport) {
+            missingColumns.push('Period Start/End or Date Report');
+          }
+        }
+        
+        if (tableType === 'inventory') {
+          const hasSnapshot = columns.snapshotDate !== -1;
+          const hasDateReport = columns.dateReport !== -1;
+          if (!hasSnapshot && !hasDateReport) {
+            missingColumns.push('Snapshot Date or Date Report');
+          }
+        }
 
         if (missingColumns.length > 0) {
           setErrors([`Missing required columns: ${missingColumns.join(', ')}`]);
@@ -259,13 +336,36 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
           });
 
           // Validate required fields
-          if (tableType !== 'ad-performance' && !item.sku) {
-            itemErrors.push(`Row ${i + 1}: SKU is required`);
+          if (requiresSkuOrPlatformSku && !item.sku && !item.platformSku) {
+            itemErrors.push(`Row ${i + 1}: SKU or Platform SKU is required`);
             hasError = true;
+          }
+          
+          if (tableType === 'sales') {
+            const hasPeriod = !!item.periodStart && !!item.periodEnd;
+            const hasDateReport = !!item.dateReport;
+            if (!hasPeriod && !hasDateReport) {
+              itemErrors.push(`Row ${i + 1}: Period Start/End or Date Report is required`);
+              hasError = true;
+            }
+          }
+          
+          if (tableType === 'inventory') {
+            const hasSnapshot = !!item.snapshotDate;
+            const hasDateReport = !!item.dateReport;
+            if (!hasSnapshot && !hasDateReport) {
+              itemErrors.push(`Row ${i + 1}: Snapshot Date or Date Report is required`);
+              hasError = true;
+            }
           }
 
           if (tableType === 'ad-performance' && !item.platformSku) {
             itemErrors.push(`Row ${i + 1}: Platform SKU/ASIN is required`);
+            hasError = true;
+          }
+          
+          if (tableType === 'sellers' && !item.sellerName) {
+            itemErrors.push(`Row ${i + 1}: Seller Name is required`);
             hasError = true;
           }
 
@@ -280,6 +380,7 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
 
           const platformRequiredTables = [
             'product-platforms',
+            'sellers',
             'sales',
             'inventory',
             'ratings'
@@ -323,12 +424,20 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
       return;
     }
 
+    if (needsSeller && !sellerId) {
+      setErrors(['Please select a seller']);
+      return;
+    }
+
     setImporting(true);
     setErrors([]);
 
     try {
       const formData = new FormData();
       formData.append('file', file);
+      if (needsSeller) {
+        formData.append('seller_id', sellerId);
+      }
 
       const response = await axios.post(
         `${API_BASE_URL}/api/upload/${tableType}`,
@@ -385,6 +494,8 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
     setParsedData(null);
     setErrors([]);
     setWarnings([]);
+    setSellerId('');
+    setSellerError('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -433,6 +544,36 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
               ×
             </button>
           </div>
+
+          {needsSeller && (
+            <div className="import-modal-section">
+              <label className="import-modal-label">Select Seller</label>
+              <select
+                className="import-modal-file-input"
+                value={sellerId}
+                onChange={(e) => setSellerId(e.target.value)}
+                disabled={importing || sellersLoading}
+              >
+                <option value="">Select a seller</option>
+                {sellers.map(s => (
+                  <option key={s.seller_id} value={s.seller_id}>
+                    {s.name} {s.platform_name ? `(${s.platform_name})` : ''}
+                  </option>
+                ))}
+              </select>
+              {!sellersLoading && !sellerError && (
+                <p className="import-modal-help-text">
+                  Sales and inventory imports are stored under this seller.
+                </p>
+              )}
+              {sellersLoading && (
+                <p className="import-modal-help-text">Loading sellers…</p>
+              )}
+              {sellerError && (
+                <p className="import-modal-help-text">{sellerError}</p>
+              )}
+            </div>
+          )}
 
           {/* File Upload */}
           <div className="import-modal-section">
@@ -530,7 +671,7 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
             </button>
             <button
               onClick={handleImport}
-              disabled={!parsedData || importing}
+              disabled={!parsedData || importing || (needsSeller && !sellerId)}
               className="import-modal-btn import-modal-btn-primary"
             >
               {importing ? 'Importing...' : `Import ${parsedData?.items.length || 0} Rows`}

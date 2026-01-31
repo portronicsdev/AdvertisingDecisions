@@ -4,17 +4,18 @@ const { evaluateAllDecisions, saveDecision } = require('../services/decisionEngi
  * Decision Job
  * Runs periodically to evaluate and save decisions for all product-platform combinations
  */
-async function runDecisionJob() {
+async function runDecisionJob(options = {}) {
     try {
         console.log('🔄 Starting decision job...');
         const startTime = Date.now();
-        
-        const decisions = await evaluateAllDecisions();
+        const { sellerId } = options;
+        const decisions = await evaluateAllDecisions({ sellerId });
         
         // Save all decisions
         for (const decision of decisions) {
             await saveDecision(
                 decision.product_platform_id,
+                decision.seller_id,
                 decision.decision,
                 decision.reason
             );

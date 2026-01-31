@@ -70,6 +70,27 @@ async function loadProductsCache() {
     return productsCache;
 }
 
+function parseReportDate(value) {
+    if (!value) return null;
+    const input = String(value).trim();
+    if (!input) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+    const match = input.match(/^(\d{1,2})\s*([A-Za-z]{3})\s*['’]?(\d{2})$/);
+    if (!match) return null;
+    const day = parseInt(match[1], 10);
+    const monthStr = match[2].toLowerCase();
+    const year = 2000 + parseInt(match[3], 10);
+    const monthMap = {
+        jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+        jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+    };
+    const month = monthMap[monthStr];
+    if (!month || day < 1 || day > 31) return null;
+    const mm = String(month).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    return `${year}-${mm}-${dd}`;
+}
+
 // Find product by normalized SKU from cache
 function findProductBySku(normalizedSku) {
     if (!productsCache) {
@@ -109,7 +130,7 @@ async function loadProductPlatformsCache() {
     return productPlatformsCache;
 }
 
-async function mapProductPlatformRow(row) {
+async function mapProductPlatformRow(row, context) {
     // Ensure cache is loaded
     await loadProductsCache();
     
@@ -129,7 +150,7 @@ async function mapProductPlatformRow(row) {
     
     return {
         product_id: productData.product_id,
-        platform_id: await getPlatformId(row),
+        platform_id: context.platformId,
         platform_sku: normalizeSku(row['Platform SKU'] || row['ASIN'] || '') || null
     };
 }
@@ -163,6 +184,9 @@ async function loadPlatformsCache() {
 }
 
 async function getPlatformId(row) {
+    if (row.__platformId) {
+        return row.__platformId;
+    }
     const platform = (row['Platform'] || '').trim();
     
     if (!platform) {
@@ -185,14 +209,27 @@ async function getPlatformId(row) {
 /**
  * Maps CSV row to sales_facts table format
  */
-async function mapSalesFactRow(row) {
-    const productPlatformId = await getProductPlatformId(row);
-    if (!productPlatformId) return null;
+async function mapSalesFactRow(row, context) {
+    const platformId = context.platformId
+    const sku = normalizeSku(row['SKU'] || '');
+    const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
+    const dateReport = parseReportDate(row['Date Report'] || row['Date'] || '');
+    const periodStart = row['Period Start (YYYY-MM-DD)'] || row['Period Start'] || dateReport || null;
+    const periodEnd = row['Period End (YYYY-MM-DD)'] || row['Period End'] || dateReport || null;
+    console.log('Mapping Sales Fact Row:', { periodStart, periodEnd, dateReport });
+    if (!sku && !platformSku) {
+        throw new Error('SKU or Platform SKU is required');
+    }
+    if (!periodStart || !periodEnd) {
+        throw new Error('Period Start/End or Date Report is required');
+    }
     
     return {
-        product_platform_id: productPlatformId,
-        period_start_date: row['Period Start (YYYY-MM-DD)'] || null,
-        period_end_date: row['Period End (YYYY-MM-DD)'] || null,
+        platform_id: platformId,
+        sku: sku || null,
+        platform_sku: platformSku || null,
+        period_start_date: periodStart,
+        period_end_date: periodEnd,
         units_sold: parseInt(row['Units Sold'] || 0),
         revenue: 0
     };
@@ -201,13 +238,24 @@ async function mapSalesFactRow(row) {
 /**
  * Maps CSV row to inventory_facts table format
  */
-async function mapInventoryFactRow(row) {
-    const productPlatformId = await getProductPlatformId(row);
-    if (!productPlatformId) return null;
+async function mapInventoryFactRow(row, context) {
+    const platformId = context.platformId;
+    const sku = normalizeSku(row['SKU'] || '');
+    const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
+    const dateReport = parseReportDate(row['Date Report'] || row['Date'] || '');
+    const snapshotDate = row['Snapshot Date (YYYY-MM-DD)'] || row['Snapshot Date'] || dateReport || null;
+    if (!sku && !platformSku) {
+        throw new Error('SKU or Platform SKU is required');
+    }
+    if (!snapshotDate) {
+        throw new Error('Snapshot Date or Date Report is required');
+    }
     
     return {
-        product_platform_id: productPlatformId,
-        snapshot_date: row['Snapshot Date'] || null,
+        platform_id: platformId,
+        sku: sku || null,
+        platform_sku: platformSku || null,
+        snapshot_date: snapshotDate,
         inventory_units: parseInt(row['Inventory Units'] || 0)
     };
 }
@@ -282,6 +330,24 @@ async function mapRatingsFactRow(row) {
 }
 
 /**
+ * Maps CSV row to sellers table format
+ */
+async function mapSellerRow(row,context) {
+    const name = (row['Seller Name'] || '').trim();
+    if (!name) {
+        throw new Error('Seller Name is required');
+    }
+    
+    const platformId = context.platformId;
+    
+    return {
+        name: name,
+        platform_id: platformId,
+        active: row['Active'] !== undefined ? (row['Active'] === 'true' || row['Active'] === true || row['Active'] === 'TRUE') : true
+    };
+}
+
+/**
  * Helper function to get product_platform_id from row
  * Products are fetched from PostgreSQL
  */
@@ -339,5 +405,6 @@ module.exports = {
     mapInventoryFactRow,
     mapCompanyInventoryFactRow,
     mapAdPerformanceFactRow,
-    mapRatingsFactRow
+    mapRatingsFactRow,
+    mapSellerRow
 };

@@ -1,5 +1,22 @@
 const supabase = require('../config/database');
 
+const ALL_SELLER_NAME = 'All Sellers';
+
+const normalizeKey = (value) => {
+    if (!value) return '';
+    return String(value).trim().replace(/\s+/g, ' ');
+};
+
+const formatOrValue = (value) => `"${String(value).replace(/"/g, '\\"')}"`;
+
+const applySkuFilters = (query, { sku, platformSku }) => {
+    const clauses = [];
+    if (platformSku) clauses.push(`platform_sku.eq.${formatOrValue(platformSku)}`);
+    if (sku) clauses.push(`sku.eq.${formatOrValue(sku)}`);
+    if (clauses.length === 0) return query;
+    return query.or(clauses.join(','));
+};
+
 /**
  * Decision Engine
  * Evaluates whether ads should be run for a product-platform combination
@@ -13,16 +30,29 @@ const supabase = require('../config/database');
 /**
  * Calculates seller stock coverage in days
  */
-async function calculateSellerStockCoverage(productPlatformId) {
+async function calculateSellerStockCoverage({ productPlatformId, platformId, sku, platformSku, sellerId, useAllSellers = false }) {
+    const normalizedSku = normalizeKey(sku);
+    const normalizedPlatformSku = normalizeKey(platformSku);
     // Get average daily sales from last 30 days
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     
-    const { data: salesData, error: salesError } = await supabase
+    let salesQuery = supabase
         .from('sales_facts')
         .select('units_sold, period_start_date')
-        .eq('product_platform_id', productPlatformId)
+        .eq('platform_id', platformId)
         .gte('period_start_date', thirtyDaysAgo.toISOString().split('T')[0]);
+    
+    if (!useAllSellers && sellerId) {
+        salesQuery = salesQuery.eq('seller_id', sellerId);
+    }
+    
+    salesQuery = applySkuFilters(salesQuery, {
+        sku: normalizedSku,
+        platformSku: normalizedPlatformSku
+    });
+    
+    const { data: salesData, error: salesError } = await salesQuery;
     
     if (salesError) {
         console.error('Error fetching sales data:', salesError);
@@ -40,10 +70,21 @@ async function calculateSellerStockCoverage(productPlatformId) {
     }
     
     // Get latest inventory
-    const { data: inventoryData, error: inventoryError } = await supabase
+    let inventoryQuery = supabase
         .from('inventory_facts')
         .select('inventory_units')
-        .eq('product_platform_id', productPlatformId)
+        .eq('platform_id', platformId);
+    
+    if (!useAllSellers && sellerId) {
+        inventoryQuery = inventoryQuery.eq('seller_id', sellerId);
+    }
+    
+    inventoryQuery = applySkuFilters(inventoryQuery, {
+        sku: normalizedSku,
+        platformSku: normalizedPlatformSku
+    });
+    
+    const { data: inventoryData, error: inventoryError } = await inventoryQuery
         .order('snapshot_date', { ascending: false })
         .limit(1)
         .single();
@@ -126,30 +167,123 @@ async function calculateROAS(productPlatformId) {
     return totalRevenue / totalSpend;
 }
 
+async function ensureAllSellers(platformIds) {
+    if (!platformIds || platformIds.length === 0) return {};
+    
+    const { data: existing, error: existingError } = await supabase
+        .from('sellers')
+        .select('seller_id, platform_id, name')
+        .in('platform_id', platformIds);
+    
+    if (existingError) {
+        throw existingError;
+    }
+    
+    const existingMap = new Map();
+    (existing || []).forEach(s => {
+        if (s.name === ALL_SELLER_NAME) {
+            existingMap.set(s.platform_id, s.seller_id);
+        }
+    });
+    
+    const missing = platformIds.filter(id => !existingMap.has(id));
+    if (missing.length > 0) {
+        const rows = missing.map(platformId => ({
+            platform_id: platformId,
+            name: ALL_SELLER_NAME,
+            active: true
+        }));
+        
+        const { error: upsertError } = await supabase
+            .from('sellers')
+            .upsert(rows, { onConflict: 'platform_id,name' });
+        
+        if (upsertError) {
+            throw upsertError;
+        }
+    }
+    
+    const { data: refreshed, error: refreshedError } = await supabase
+        .from('sellers')
+        .select('seller_id, platform_id, name')
+        .in('platform_id', platformIds)
+        .eq('name', ALL_SELLER_NAME);
+    
+    if (refreshedError) {
+        throw refreshedError;
+    }
+    
+    const allMap = {};
+    (refreshed || []).forEach(s => {
+        allMap[s.platform_id] = s.seller_id;
+    });
+    
+    return allMap;
+}
+
+async function getSellerById(sellerId) {
+    const { data, error } = await supabase
+        .from('sellers')
+        .select('seller_id, name, platform_id')
+        .eq('seller_id', sellerId)
+        .single();
+    
+    if (error || !data) {
+        throw new Error(`Seller not found for seller_id: ${sellerId}`);
+    }
+    
+    return data;
+}
+
 /**
  * Evaluates decision for a single product-platform combination
  */
-async function evaluateDecision(productPlatformId) {
+async function evaluateDecision(productPlatformId, options = {}) {
+    const {
+        sellerId,
+        useAllSellers = false,
+        productId: providedProductId,
+        platformId,
+        sku,
+        platformSku
+    } = options;
     try {
         // Get product_id for company inventory check
-        const { data: productData, error: productError } = await supabase
-            .from('product_platforms')
-            .select('product_id')
-            .eq('product_platform_id', productPlatformId)
-            .single();
+        let productId = providedProductId;
+        if (!productId) {
+            const { data: productData, error: productError } = await supabase
+                .from('product_platforms')
+                .select('product_id')
+                .eq('product_platform_id', productPlatformId)
+                .single();
+            
+            if (productError || !productData) {
+                return {
+                    decision: false,
+                    reason: 'Product-platform combination not found'
+                };
+            }
+            
+            productId = productData.product_id;
+        }
         
-        if (productError || !productData) {
+        if (!productId) {
             return {
                 decision: false,
                 reason: 'Product-platform combination not found'
             };
         }
-        
-        const productId = productData.product_id;
         const reasons = [];
         
         // 1. Inventory Gate
-        const stockCoverage = await calculateSellerStockCoverage(productPlatformId);
+        const stockCoverage = await calculateSellerStockCoverage({
+            productPlatformId,
+            platformId,
+            sku,
+            platformSku,
+            sellerId,
+            useAllSellers
+        });
         const companyInventory = await getCompanyInventory(productId);
         
         if (stockCoverage < 7) {
@@ -203,25 +337,98 @@ async function evaluateDecision(productPlatformId) {
 /**
  * Evaluates decisions for all product-platform combinations
  */
-async function evaluateAllDecisions() {
+async function evaluateAllDecisions(options = {}) {
     try {
-        const { data, error } = await supabase
+        const { sellerId } = options;
+        let sellerContext = null;
+        let platformIdsFilter = null;
+        
+        if (sellerId) {
+            sellerContext = await getSellerById(sellerId);
+            platformIdsFilter = [sellerContext.platform_id];
+        }
+        
+        let ppQuery = supabase
             .from('product_platforms')
-            .select('product_platform_id');
+            .select(`
+                product_platform_id,
+                product_id,
+                platform_id,
+                platform_sku,
+                products:products!inner(
+                    sku
+                )
+            `);
+        
+        if (platformIdsFilter && platformIdsFilter.length > 0) {
+            ppQuery = ppQuery.in('platform_id', platformIdsFilter);
+        }
+        
+        const { data, error } = await ppQuery;
         
         if (error) {
             throw error;
         }
         
-        const productPlatformIds = [...new Set((data || []).map(row => row.product_platform_id))];
+        const productPlatforms = data || [];
         const decisions = [];
         
-        for (const productPlatformId of productPlatformIds) {
-            const decision = await evaluateDecision(productPlatformId);
-            decisions.push({
-                product_platform_id: productPlatformId,
-                ...decision
-            });
+        if (sellerId && sellerContext) {
+            const useAllSellers = sellerContext.name === ALL_SELLER_NAME;
+            for (const pp of productPlatforms) {
+                const decision = await evaluateDecision(pp.product_platform_id, {
+                    sellerId,
+                    useAllSellers,
+                    productId: pp.product_id,
+                    platformId: pp.platform_id,
+                    sku: pp.products?.sku,
+                    platformSku: pp.platform_sku
+                });
+                decisions.push({
+                    product_platform_id: pp.product_platform_id,
+                    seller_id: sellerId,
+                    ...decision
+                });
+            }
+        } else {
+            const platformIds = [...new Set(productPlatforms.map(row => row.platform_id))];
+            await ensureAllSellers(platformIds);
+            
+            const { data: sellers, error: sellersError } = await supabase
+                .from('sellers')
+                .select('seller_id, name, platform_id')
+                .in('platform_id', platformIds);
+            
+            if (sellersError) {
+                throw sellersError;
+            }
+            
+            const sellersByPlatform = (sellers || []).reduce((map, s) => {
+                if (!map[s.platform_id]) map[s.platform_id] = [];
+                map[s.platform_id].push(s);
+                return map;
+            }, {});
+            
+            for (const pp of productPlatforms) {
+                const platformSellers = sellersByPlatform[pp.platform_id] || [];
+                
+                for (const seller of platformSellers) {
+                    const useAllSellers = seller.name === ALL_SELLER_NAME;
+                    const decision = await evaluateDecision(pp.product_platform_id, {
+                        sellerId: seller.seller_id,
+                        useAllSellers,
+                        productId: pp.product_id,
+                        platformId: pp.platform_id,
+                        sku: pp.products?.sku,
+                        platformSku: pp.platform_sku
+                    });
+                    decisions.push({
+                        product_platform_id: pp.product_platform_id,
+                        seller_id: seller.seller_id,
+                        ...decision
+                    });
+                }
+            }
         }
         
         return decisions;
@@ -234,17 +441,22 @@ async function evaluateAllDecisions() {
 /**
  * Saves decision to database
  */
-async function saveDecision(productPlatformId, decision, reason) {
+async function saveDecision(productPlatformId, sellerId, decision, reason) {
     try {
+        if (!sellerId) {
+            throw new Error('seller_id is required to save decision');
+        }
+        
         const { error } = await supabase
             .from('decisions')
             .upsert({
                 product_platform_id: productPlatformId,
+                seller_id: sellerId,
                 decision: decision,
                 reason: reason,
                 evaluated_at: new Date().toISOString()
             }, {
-                onConflict: 'product_platform_id'
+                onConflict: 'product_platform_id,seller_id'
             });
         
         if (error) {
