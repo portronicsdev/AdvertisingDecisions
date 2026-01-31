@@ -4,8 +4,17 @@ const path = require('path');
 const fs = require('fs');
 const supabase = require('../config/database');
 const { excelToCsv } = require('../utils/excelToCsv');
-const { runImportPipeline } = require('../services/import/pipeline');
-const { getTableName } = require('../services/import/normalizers');
+const { ingestCsv } = require('../services/ingestionService');
+const {
+    mapProductRow,
+    mapProductPlatformRow,
+    mapSalesFactRow,
+    mapInventoryFactRow,
+    mapCompanyInventoryFactRow,
+    mapAdPerformanceFactRow,
+    mapRatingsFactRow,
+    mapSellerRow
+} = require('../services/mappers');
 const { runDecisionJob } = require('../jobs/decisionJob');
 
 // Keep CSV files for debugging (set KEEP_CSV_FILES=true in .env to enable)
@@ -45,8 +54,8 @@ const upload = multer({
 
 /**
  * POST /api/upload/:tableType
- * Uploads Excel file, converts to CSV, then runs the import pipeline:
- *   upload.js -> excelToCsv -> import/pipeline -> import/normalizers -> mappers -> ingestionService
+ * Uploads Excel file, converts to CSV, then streams rows into the database:
+ *   upload.js -> excelToCsv -> mappers -> ingestionService
  *
  * tableType options:
  * - products (product master data)
@@ -84,7 +93,7 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
         
         console.log(`📄 CSV file ready: ${csvPath}`);
         
-        // Validate table type early in pipeline
+        // Validate table type early
         if (!tableType) {
             fs.unlinkSync(excelPath);
             if (fs.existsSync(csvPath)) fs.unlinkSync(csvPath);
@@ -121,17 +130,55 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
             sellerId = parsedSellerId;
         }
         
+        const mapperMap = {
+            'products': mapProductRow,
+            'product-platforms': mapProductPlatformRow,
+            'sales': mapSalesFactRow,
+            'inventory': mapInventoryFactRow,
+            'company-inventory': mapCompanyInventoryFactRow,
+            'ad-performance': mapAdPerformanceFactRow,
+            'ratings': mapRatingsFactRow,
+            'sellers': mapSellerRow
+        };
+        
+        const tableMap = {
+            'products': 'products',
+            'product-platforms': 'product_platforms',
+            'sales': 'sales_facts',
+            'inventory': 'inventory_facts',
+            'company-inventory': 'company_inventory_facts',
+            'ad-performance': 'ad_performance_facts',
+            'ratings': 'ratings_facts',
+            'sellers': 'sellers'
+        };
+        
+        const mapper = mapperMap[tableType];
+        const tableName = tableMap[tableType];
+        
+        if (!mapper || !tableName) {
+            fs.unlinkSync(excelPath);
+            if (fs.existsSync(csvPath)) fs.unlinkSync(csvPath);
+            return res.status(400).json({ error: `Invalid table type: ${tableType}` });
+        }
+        
+        const context = {
+            sellerId,
+            platformId
+        };
+        
+        const rowMapper = async (row) => {
+            const mapped = await mapper(row, context);
+            if (!mapped) return null;
+            if ((tableType === 'sales' || tableType === 'inventory') && sellerId) {
+                return { ...mapped, seller_id: sellerId };
+            }
+            return mapped;
+        };
+        
         // Ingest CSV into database
         let result;
         try {
-            result = await runImportPipeline({
-                tableType,
-                csvPath,
-                context: {
-                    sellerId,
-                    platformId
-                }
-            });
+            result = await ingestCsv(csvPath, tableName, rowMapper);
         } catch (ingestError) {
             // Clean up files on ingestion error
             console.error('Ingestion error:', ingestError);
@@ -200,7 +247,6 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
             // Don't fail the upload if decision job fails
         }*/
         
-        const tableName = getTableName(tableType) || tableType;
         res.json({
             success: true,
             message: `Successfully ingested ${result.rowCount} rows into ${tableName}`,

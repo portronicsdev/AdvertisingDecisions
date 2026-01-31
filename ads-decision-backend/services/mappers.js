@@ -130,7 +130,7 @@ async function loadProductPlatformsCache() {
     return productPlatformsCache;
 }
 
-async function mapProductPlatformRow(row, context) {
+async function mapProductPlatformRow(row, context = {}) {
     // Ensure cache is loaded
     await loadProductsCache();
     
@@ -148,9 +148,14 @@ async function mapProductPlatformRow(row, context) {
         throw new Error(`Product not found for SKU: "${inputSku}". Please ensure this product exists in the products table.`);
     }
     
+    const platformId = context.platformId;
+    if (!platformId) {
+        throw new Error('platformId is required in context for product-platforms import');
+    }
+    
     return {
         product_id: productData.product_id,
-        platform_id: context.platformId,
+        platform_id: platformId,
         platform_sku: normalizeSku(row['Platform SKU'] || row['ASIN'] || '') || null
     };
 }
@@ -209,8 +214,11 @@ async function getPlatformId(row) {
 /**
  * Maps CSV row to sales_facts table format
  */
-async function mapSalesFactRow(row, context) {
-    const platformId = context.platformId
+async function mapSalesFactRow(row, context = {}) {
+    const platformId = context.platformId;
+    if (!platformId) {
+        throw new Error('platformId is required in context for sales import');
+    }
     const sku = normalizeSku(row['SKU'] || '');
     const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
     const dateReport = parseReportDate(row['Date Report'] || row['Date'] || '');
@@ -238,8 +246,11 @@ async function mapSalesFactRow(row, context) {
 /**
  * Maps CSV row to inventory_facts table format
  */
-async function mapInventoryFactRow(row, context) {
+async function mapInventoryFactRow(row, context = {}) {
     const platformId = context.platformId;
+    if (!platformId) {
+        throw new Error('platformId is required in context for inventory import');
+    }
     const sku = normalizeSku(row['SKU'] || '');
     const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
     const dateReport = parseReportDate(row['Date Report'] || row['Date'] || '');
@@ -332,13 +343,16 @@ async function mapRatingsFactRow(row) {
 /**
  * Maps CSV row to sellers table format
  */
-async function mapSellerRow(row,context) {
+async function mapSellerRow(row, context = {}) {
     const name = (row['Seller Name'] || '').trim();
     if (!name) {
         throw new Error('Seller Name is required');
     }
     
     const platformId = context.platformId;
+    if (!platformId) {
+        throw new Error('platformId is required in context for sellers import');
+    }
     
     return {
         name: name,
