@@ -32,8 +32,8 @@ function getNormalizer(tableType) {
     };
 
     const normalizeInventory = async (row, context) => {
-        const enriched = rowl
-        return mapInventoryFactRow(enriched);
+        const enriched = row;
+        return mapInventoryFactRow(enriched, context);
     };
 
     const normalizerMap = {
