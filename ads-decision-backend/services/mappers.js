@@ -219,12 +219,12 @@ async function mapSalesFactRow(row, context = {}) {
     if (!platformId) {
         throw new Error('platformId is required in context for sales import');
     }
+    
     const sku = normalizeSku(row['SKU'] || '');
     const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
     const dateReport = parseReportDate(row['Date Report'] || row['Date'] || '');
     const periodStart = row['Period Start (YYYY-MM-DD)'] || row['Period Start'] || dateReport || null;
     const periodEnd = row['Period End (YYYY-MM-DD)'] || row['Period End'] || dateReport || null;
-    console.log('Mapping Sales Fact Row:', { periodStart, periodEnd, dateReport });
     if (!sku && !platformSku) {
         throw new Error('SKU or Platform SKU is required');
     }
@@ -238,8 +238,7 @@ async function mapSalesFactRow(row, context = {}) {
         platform_sku: platformSku || null,
         period_start_date: periodStart,
         period_end_date: periodEnd,
-        units_sold: parseInt(row['Units Sold'] || 0),
-        revenue: 0
+        units_sold: parseInt(row['Units'] || 0)
     };
 }
 
@@ -422,3 +421,5 @@ module.exports = {
     mapRatingsFactRow,
     mapSellerRow
 };
+
+
