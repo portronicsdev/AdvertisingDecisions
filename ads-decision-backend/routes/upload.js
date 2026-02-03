@@ -163,7 +163,8 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
         
         const context = {
             sellerId,
-            platformId
+            platformId,
+            adType: (req.body.ad_type || '').toLowerCase().trim() || null
         };
         
         const rowMapper = async (row) => {
@@ -250,7 +251,7 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
         const rangeStart = req.body.range_start || null;
         const rangeEnd = req.body.range_end || null;
         const rangeLabel = req.body.range_label || null;
-        if (['sales', 'inventory', 'ad-performance'].includes(tableType)) {
+        if (['sales', 'inventory', 'ad-performance', 'products', 'product-platforms'].includes(tableType)) {
             const { error: logError } = await supabase
                 .from('upload_logs')
                 .insert({
@@ -269,7 +270,9 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
             success: true,
             message: `Successfully ingested ${result.rowCount} rows into ${tableName}`,
             rowCount: result.rowCount,
-            batchCount: result.batchCount
+            batchCount: result.batchCount,
+            skippedRowCount: result.skippedRowCount,
+            errorRowCount: result.errorRowCount
         });
         
     } catch (error) {

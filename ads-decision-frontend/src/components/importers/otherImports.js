@@ -95,32 +95,36 @@ const otherImports = {
   },
   'ad-performance': {
     template: {
-      headers: ['ASIN', 'Date', 'Period Start (YYYY-MM-DD)', 'Period End (YYYY-MM-DD)', 'Spend', 'Revenue', 'Ad Type'],
+      headers: ['ASIN', 'Date', 'Week', 'Month', 'Year', 'Period Start (YYYY-MM-DD)', 'Period End (YYYY-MM-DD)', 'Spend', 'Revenue', 'Ad Type'],
       sample: [
-        ['B07N8RQ6W7', '2024-01-01', '', '', 5000, 40000, 'sp'],
-        ['B0CVN4DNWY', '', '2024-01-01', '2024-01-31', 3000, 20000, 'sd'],
+        ['B07N8RQ6W7', '2024-01-01', '', '', '', '', '', 5000, 40000, 'sp'],
+        ['B0CVN4DNWY', '', '2', '01', '2024', '', '', 3000, 20000, 'sd'],
       ],
       filename: 'Ad_Performance_Template.xlsx',
-      description: 'Ad spend and revenue data. Use ASIN (or Platform SKU). Date can be used for both Period Start/End.'
+      description: 'Ad spend and revenue data. Use ASIN (or Platform SKU). Provide Date, Period Start/End, or Week/Month/Year.'
     },
     needsDateRange: true,
     columnMap: {
       platformSku: ['Platform SKU', 'ASIN'],
       date: ['Date'],
+      week: ['Week'],
+      month: ['Month'],
+      year: ['Year'],
       periodStart: ['Period Start (YYYY-MM-DD)'],
       periodEnd: ['Period End (YYYY-MM-DD)'],
       spend: ['Spend'],
       revenue: ['Revenue'],
       adType: ['Ad Type']
     },
-    requiredColumns: ['platformSku', 'adType'],
+    requiredColumns: ['platformSku'],
     validateRow(item, rowNumber) {
       const errors = [];
       if (!item.platformSku) errors.push(`Row ${rowNumber}: Platform SKU/ASIN is required`);
       const hasDate = !!item.date;
       const hasPeriod = !!item.periodStart && !!item.periodEnd;
-      if (!hasDate && !hasPeriod) {
-        errors.push(`Row ${rowNumber}: Date or Period Start/End is required`);
+      const hasWeek = !!item.week && !!item.month && !!item.year;
+      if (!hasDate && !hasPeriod && !hasWeek) {
+        errors.push(`Row ${rowNumber}: Date, Period Start/End, or Week/Month/Year is required`);
       }
       return errors;
     }

@@ -45,6 +45,7 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
   const [platform, setPlatform] = useState('');
   const [sellersLoading, setSellersLoading] = useState(false);
   const [sellerError, setSellerError] = useState('');
+  const [adType, setAdType] = useState('');
   const [rangePreset, setRangePreset] = useState('month');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -55,6 +56,7 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
   const template = importer?.template || null;
   const needsSeller = importer?.needsSeller || false;
   const needsDateRange = importer?.needsDateRange || false;
+  const needsAdType = tableType === 'ad-performance';
 
   const getPresetRange = (preset) => {
     const today = new Date();
@@ -125,6 +127,11 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
       setCustomEnd('');
     }
   }, [open, tableType, needsDateRange]);
+
+  useEffect(() => {
+    if (!open || !needsAdType) return;
+    setAdType('');
+  }, [open, needsAdType]);
 
   if (!open || !tableType) return null;
 
@@ -266,6 +273,11 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
       return;
     }
     
+    if (needsAdType && !adType) {
+      setErrors(['Please select Ad Type']);
+      return;
+    }
+
     if (needsDateRange && (!rangeStart || !rangeEnd)) {
       setErrors(['Please select a date range']);
       return;
@@ -287,6 +299,10 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
         formData.append('range_end', rangeEnd || '');
         formData.append('range_label', rangePreset);
         localStorage.setItem(`rangePreset:${tableType}`, rangePreset);
+      }
+      if (needsAdType) {
+        formData.append('ad_type', adType);
+        localStorage.setItem('adType', adType);
       }
 
       const response = await axios.post(
@@ -346,6 +362,7 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
     setWarnings([]);
     setSellerId('');
     setSellerError('');
+    setAdType('');
     setRangePreset('month');
     setCustomStart('');
     setCustomEnd('');
@@ -445,6 +462,22 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
               {sellerError && (
                 <p className="import-modal-help-text">{sellerError}</p>
               )}
+            </div>
+          )}
+
+          {needsAdType && (
+            <div className="import-modal-section">
+              <label className="import-modal-label">Ad Type</label>
+              <select
+                className="import-modal-file-input"
+                value={adType}
+                onChange={(e) => setAdType(e.target.value)}
+                disabled={importing}
+              >
+                <option value="">Select Ad Type</option>
+                <option value="sp">Sponsored Products (sp)</option>
+                <option value="sd">Sponsored Display (sd)</option>
+              </select>
             </div>
           )}
 

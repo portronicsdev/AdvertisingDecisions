@@ -26,6 +26,7 @@ export default function DataPage({
   const [pageSize, setPageSize] = useState(25);
   const [pageIndex, setPageIndex] = useState(0);
   const [lastUpload, setLastUpload] = useState(null);
+  const [search, setSearch] = useState('');
 
   const offset = pageIndex * pageSize;
   const totalPages = Math.max(Math.ceil(count / pageSize), 1);
@@ -36,8 +37,15 @@ export default function DataPage({
       try {
         setLoading(true);
         setError('');
+        const query = new URLSearchParams({
+          limit: String(pageSize),
+          offset: String(offset)
+        });
+        if (search.trim()) {
+          query.append('search', search.trim());
+        }
         const response = await axios.get(
-          `${API_BASE_URL}/api/data/${tableType}?limit=${pageSize}&offset=${offset}`
+          `${API_BASE_URL}/api/data/${tableType}?${query.toString()}`
         );
         if (!isActive) return;
         setRows(response.data?.rows || []);
@@ -57,7 +65,7 @@ export default function DataPage({
     return () => {
       isActive = false;
     };
-  }, [tableType, pageSize, offset, refreshKey]);
+  }, [tableType, pageSize, offset, refreshKey, search]);
 
   useEffect(() => {
     if (count === 0) return;
@@ -117,6 +125,17 @@ export default function DataPage({
       </div>
 
       <div className="page-controls">
+        <div className="search-box">
+          <input
+            type="text"
+            placeholder="Search SKU / ASIN"
+            value={search}
+            onChange={(e) => {
+              setPageIndex(0);
+              setSearch(e.target.value);
+            }}
+          />
+        </div>
         <div className="pagination">
           <button
             className="btn btn-secondary"

@@ -231,17 +231,37 @@ const getConfig = (tableType) => {
 router.get('/:tableType', async (req, res) => {
     try {
         const { tableType } = req.params;
+        const { search } = req.query;
         const config = getConfig(tableType);
         if (!config) {
             return res.status(400).json({ success: false, message: `Invalid table type: ${tableType}` });
         }
 
         const { limit, offset } = parsePagination(req);
-        const { data, error, count } = await supabase
+        let query = supabase
             .from(config.table)
             .select(config.select, { count: 'exact' })
-            .order(config.order.column, { ascending: config.order.ascending })
-            .range(offset, offset + limit - 1);
+            .order(config.order.column, { ascending: config.order.ascending });
+
+        if (search) {
+            const term = String(search).trim();
+            if (term) {
+                const like = `*${term}*`;
+                if (tableType === 'sales' || tableType === 'inventory') {
+                    query = query.or(`sku.ilike.${like},platform_sku.ilike.${like}`);
+                } else if (tableType === 'decisions') {
+                    query = query.or(`product_platforms.platform_sku.ilike.${like},product_platforms.products.sku.ilike.${like}`);
+                } else if (tableType === 'ad-performance' || tableType === 'ratings') {
+                    query = query.or(`product_platforms.platform_sku.ilike.${like},product_platforms.products.sku.ilike.${like}`);
+                } else if (tableType === 'product-platforms') {
+                    query = query.or(`platform_sku.ilike.${like},products.sku.ilike.${like}`);
+                }
+            }
+        }
+
+        query = query.range(offset, offset + limit - 1);
+
+        const { data, error, count } = await query;
 
         if (error) {
             throw error;

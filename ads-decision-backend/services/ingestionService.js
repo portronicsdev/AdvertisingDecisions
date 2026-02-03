@@ -21,7 +21,9 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
         let rowCount = 0;
         let rawRowCount = 0;
         let skippedRowCount = 0;
+        const skippedRows = [];
         let errorRowCount = 0;
+        const errorRows = [];
         let batchCount = 0;
         const startTime = Date.now();
 
@@ -52,11 +54,8 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
                     rowCount++;
                     if (rowCount % 100 === 0) {
                         const elapsed = Date.now() - startTime;
-                        console.log(`⏱️  Mapped ${rowCount} rows in ${formatDuration(elapsed)}`);
+                        //console.log(`⏱️  Mapped ${rowCount} rows in ${formatDuration(elapsed)}`);
                     }
-
-                    if(rowCount == 1)
-                        console.log(`📋 First mapped row sample:`, JSON.stringify(mappedRow));
 
                     // Insert batch when full
                     if (rows.length >= batchSize) {
@@ -69,10 +68,20 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
                     if (skippedRowCount <= 3) {
                         console.log(`⚠️  Row ${rowNum} was skipped (mapper returned null)`);
                     }
+                    if (skippedRows.length < 50) {
+                        skippedRows.push({ rowNum, reason: 'mapper returned null', row });
+                    }
                 }
             } catch (error) {
                 errorRowCount++;
                 console.error(`❌ Error mapping row ${rowNum}:`, error.message);
+                if (errorRows.length < 50) {
+                    errorRows.push({
+                        rowNum,
+                        error: error.message,
+                        row
+                    });
+                }
                 
                 // Don't reject immediately - continue processing but track errors
                 // Only reject if too many errors occur
@@ -131,6 +140,7 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
                     console.log(`   Successfully mapped: ${rowCount}`);
                     console.log(`   Skipped (null): ${skippedRowCount}`);
                     console.log(`   Errors: ${errorRowCount}`);
+                    console.log(`   Inserted: ${rowCount} (batches: ${batchCount + (rows.length > 0 ? 1 : 0)})`);
                     
                     if (rowCount === 0) {
                         const errorMsg = rawRowCount === 0 
@@ -145,6 +155,7 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
                     }
                     
                     console.log(`✅ Ingested ${rowCount} rows into ${tableName}`);
+                   
                     resolve({ rowCount, batchCount, rawRowCount, skippedRowCount, errorRowCount });
                 } catch (error) {
                     console.error('Error in ingestion end handler:', error);

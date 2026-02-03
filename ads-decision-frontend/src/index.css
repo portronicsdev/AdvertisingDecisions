@@ -209,6 +209,14 @@ code {
   margin-bottom: 12px;
 }
 
+.search-box input {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  font-size: 12px;
+  min-width: 220px;
+}
+
 .pagination {
   display: flex;
   align-items: center;

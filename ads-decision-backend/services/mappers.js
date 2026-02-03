@@ -34,6 +34,9 @@ let platformsCache = null;
 let platformsCacheLoaded = false;
 let productPlatformsCache = null;
 let productPlatformsCacheLoaded = false;
+let productPlatformBySku = null;
+let productPlatformByPlatformSku = null;
+let productPlatformLookupLoaded = false;
 
 // Normalize SKU: trim and replace multiple spaces with single space
 function normalizeSku(sku) {
@@ -135,6 +138,65 @@ function normalizeDate(value) {
     return `${year}-${mm}-${dd}`;
 }
 
+function parseMonthValue(value) {
+    if (!value) return null;
+    const input = String(value).trim();
+    if (!input) return null;
+    if (/^[A-Za-z]+$/.test(input) && input.length > 3) {
+        const key = input.slice(0, 3).toLowerCase();
+        const monthMap = {
+            jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+            jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+        };
+        return monthMap[key] || null;
+    }
+    if (/^\d{1,2}$/.test(input)) {
+        const monthNum = parseInt(input, 10);
+        if (monthNum >= 1 && monthNum <= 12) return monthNum;
+        return null;
+    }
+    const monthMap = {
+        jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+        jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+    };
+    const key = input.slice(0, 3).toLowerCase();
+    return monthMap[key] || null;
+}
+
+function parseYearValue(value) {
+    if (!value) return null;
+    const input = String(value).trim();
+    if (!input) return null;
+    if (/^\d{2}$/.test(input)) {
+        return 2000 + parseInt(input, 10);
+    }
+    if (/^\d{4}$/.test(input)) {
+        return parseInt(input, 10);
+    }
+    return null;
+}
+
+function deriveRangeFromWeekMonthYear(weekValue, monthValue, yearValue) {
+    const weekInput = String(weekValue || '').trim().toLowerCase();
+    const week = parseInt(weekInput.replace(/^w/, ''), 10);
+    const month = parseMonthValue(monthValue);
+    const year = parseYearValue(yearValue);
+    if (!week || !month || !year) return null;
+    if (week < 1 || week > 5) {
+        throw new Error(`Week must be between 1 and 5. Got: "${weekValue}"`);
+    }
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const startDay = (week - 1) * 7 + 1;
+    if (startDay > daysInMonth) {
+        throw new Error(`Week ${week} is خارج range for ${month}/${year}`);
+    }
+    const endDay = Math.min(startDay + 6, daysInMonth);
+    const mm = String(month).padStart(2, '0');
+    const start = `${year}-${mm}-${String(startDay).padStart(2, '0')}`;
+    const end = `${year}-${mm}-${String(endDay).padStart(2, '0')}`;
+    return { start, end };
+}
+
 // Find product by normalized SKU from cache
 function findProductBySku(normalizedSku) {
     if (!productsCache) {
@@ -174,6 +236,43 @@ async function loadProductPlatformsCache() {
     return productPlatformsCache;
 }
 
+async function loadProductPlatformLookups() {
+    if (productPlatformLookupLoaded) return { productPlatformBySku, productPlatformByPlatformSku };
+    console.log('📦 Loading product_platforms lookups...');
+    const { data: rows, error } = await supabase
+        .from('product_platforms')
+        .select(`
+            product_platform_id,
+            platform_id,
+            platform_sku,
+            products:products!inner(
+                sku
+            )
+        `);
+
+    if (error) {
+        throw new Error(`Cannot access product_platforms table: ${error.message}`);
+    }
+
+    productPlatformBySku = {};
+    productPlatformByPlatformSku = {};
+    (rows || []).forEach(row => {
+        const skuKey = normalizeSku(row.products?.sku || '');
+        const platformSkuKey = normalizeSku(row.platform_sku || '');
+        const platformId = row.platform_id;
+        if (platformId && skuKey) {
+            productPlatformBySku[`${platformId}::${skuKey}`] = row.product_platform_id;
+        }
+        if (platformId && platformSkuKey) {
+            productPlatformByPlatformSku[`${platformId}::${platformSkuKey}`] = row.product_platform_id;
+        }
+    });
+
+    productPlatformLookupLoaded = true;
+    console.log(`✅ Loaded ${rows?.length || 0} product_platforms into lookups`);
+    return { productPlatformBySku, productPlatformByPlatformSku };
+}
+
 async function mapProductPlatformRow(row, context = {}) {
     // Ensure cache is loaded
     await loadProductsCache();
@@ -192,9 +291,9 @@ async function mapProductPlatformRow(row, context = {}) {
         throw new Error(`Product not found for SKU: "${inputSku}". Please ensure this product exists in the products table.`);
     }
     
-    const platformId = context.platformId;
+    let platformId = context.platformId;
     if (!platformId) {
-        throw new Error('platformId is required in context for product-platforms import');
+        platformId = await getPlatformId(row);
     }
     
     return {
@@ -275,6 +374,14 @@ async function mapSalesFactRow(row, context = {}) {
     if (!periodStart || !periodEnd) {
         throw new Error('Period Start/End or Date Report is required');
     }
+
+    await loadProductPlatformLookups();
+    if (sku && !productPlatformBySku[`${platformId}::${sku}`]) {
+        throw new Error(`SKU not found in product_platforms for platform ${platformId}: "${sku}"`);
+    }
+    if (platformSku && !productPlatformByPlatformSku[`${platformId}::${platformSku}`]) {
+        throw new Error(`Platform SKU not found in product_platforms for platform ${platformId}: "${platformSku}"`);
+    }
     
     return {
         platform_id: platformId,
@@ -303,6 +410,14 @@ async function mapInventoryFactRow(row, context = {}) {
     }
     if (!snapshotDate) {
         throw new Error('Snapshot Date or Date Report is required');
+    }
+
+    await loadProductPlatformLookups();
+    if (sku && !productPlatformBySku[`${platformId}::${sku}`]) {
+        throw new Error(`SKU not found in product_platforms for platform ${platformId}: "${sku}"`);
+    }
+    if (platformSku && !productPlatformByPlatformSku[`${platformId}::${platformSku}`]) {
+        throw new Error(`Platform SKU not found in product_platforms for platform ${platformId}: "${platformSku}"`);
     }
     
     return {
@@ -345,14 +460,42 @@ async function mapCompanyInventoryFactRow(row) {
 /**
  * Maps CSV row to ad_performance_facts table format
  */
-async function mapAdPerformanceFactRow(row) {
+async function mapAdPerformanceFactRow(row, context = {}) {
     const productPlatformId = await getProductPlatformIdByPlatformSku(row);
-    if (!productPlatformId) return null;
+    if (!productPlatformId) {
+        const key = (row['Platform SKU'] || row['ASIN'] || '').trim();
+        throw new Error(`Platform SKU/ASIN not found in product_platforms: "${key}"`);
+    }
     
     const dateValue = normalizeDate(row['Date'] || null);
+    let periodStart = normalizeDate(row['Period Start'] || null);
+    let periodEnd = normalizeDate(row['Period End'] || null);
+    if (!dateValue && (!periodStart || !periodEnd)) {
+        const weekRange = deriveRangeFromWeekMonthYear(row['Week'], row['Month'], row['Year']);
+        if (weekRange) {
+            periodStart = weekRange.start;
+            periodEnd = weekRange.end;
+        }
+    }
+    if (dateValue) {
+        periodStart = periodStart || dateValue;
+        periodEnd = periodEnd || dateValue;
+    }
+    if (!periodStart || !periodEnd) {
+        console.log('⚠️ Missing ad performance dates after parsing', {
+            week: row['Week'],
+            month: row['Month'],
+            year: row['Year'],
+            date: row['Date'],
+            periodStart: row['Period Start'],
+            periodEnd: row['Period End']
+        });
+        throw new Error('Ad performance requires Date, Period Start/End, or Week/Month/Year');
+    }
 
     // Get ad_type (sp or sd)
-    const adType = (row['Ad Type'] || '').toLowerCase().trim();
+    const adTypeRaw = (row['Ad Type'] || '').toLowerCase().trim();
+    const adType = adTypeRaw || context.adType || '';
     
     if (!adType || (adType !== 'sp' && adType !== 'sd')) {
         throw new Error(`ad_type is required and must be 'sp' (Sponsored Products) or 'sd' (Sponsored Display). Got: "${adType}"`);
@@ -360,8 +503,8 @@ async function mapAdPerformanceFactRow(row) {
     
     return {
         product_platform_id: productPlatformId,
-        period_start_date: normalizeDate(dateValue || row['Period Start'] || null),
-        period_end_date: normalizeDate(dateValue || row['Period End'] || null),
+        period_start_date: periodStart,
+        period_end_date: periodEnd,
         spend: parseFloat(row['Spend'] || 0),
         revenue: parseFloat(row['Revenue'] || 0),
         ad_type: adType

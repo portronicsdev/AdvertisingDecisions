@@ -22,6 +22,7 @@ function App() {
   const menuItems = useMemo(() => ([
     { key: 'decisions', label: 'Decisions', tableType: 'decisions' },
     { key: 'platforms', label: 'Platforms', tableType: 'platforms' },
+    { key: 'products', label: 'Products', tableType: 'products' },
     { key: 'product-platforms', label: 'Products in Platforms', tableType: 'product-platforms' },
     { key: 'sellers', label: 'Sellers', tableType: 'sellers' },
     { key: 'sales', label: 'Sales', tableType: 'sales' },
@@ -127,6 +128,13 @@ function App() {
     platforms: [
       { key: 'name', label: 'Platform' },
       { key: 'created_at', label: 'Created', render: (row) => new Date(row.created_at).toLocaleDateString() }
+    ],
+    products: [
+      { key: 'sku', label: 'SKU' },
+      { key: 'product_name', label: 'Product' },
+      { key: 'category', label: 'Category' },
+      { key: 'launch_date', label: 'Launch' },
+      { key: 'active', label: 'Active', render: (row) => (row.active ? 'Yes' : 'No') }
     ],
     'product-platforms': [
       { key: 'sku', label: 'SKU' },
