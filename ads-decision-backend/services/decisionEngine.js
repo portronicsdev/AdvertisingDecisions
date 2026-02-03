@@ -248,6 +248,7 @@ async function evaluateDecision(productPlatformId, options = {}) {
         platformSku
     } = options;
     try {
+        const startTime = Date.now();
         // Get product_id for company inventory check
         let productId = providedProductId;
         if (!productId) {
@@ -320,10 +321,15 @@ async function evaluateDecision(productPlatformId, options = {}) {
         reasons.push(`Performance Gate PASSED: ROAS (${roas.toFixed(2)}) > 8`);
         
         // All gates passed
-        return {
+        const result = {
             decision: true,
             reason: reasons.join(' | ')
         };
+        const duration = Date.now() - startTime;
+        if (duration > 1000) {
+            console.log(`⏱️ evaluateDecision ${productPlatformId} took ${duration}ms`);
+        }
+        return result;
         
     } catch (error) {
         console.error(`Error evaluating decision for product_platform_id ${productPlatformId}:`, error);
@@ -342,6 +348,7 @@ async function evaluateAllDecisions(options = {}) {
         const { sellerId } = options;
         let sellerContext = null;
         let platformIdsFilter = null;
+        console.log(`🧩 Loading product platforms${sellerId ? ` for seller ${sellerId}` : ''}...`);
         
         if (sellerId) {
             sellerContext = await getSellerById(sellerId);
@@ -371,11 +378,16 @@ async function evaluateAllDecisions(options = {}) {
         }
         
         const productPlatforms = data || [];
+        console.log(`📦 Product-platforms: ${productPlatforms.length}`);
         const decisions = [];
         
         if (sellerId && sellerContext) {
             const useAllSellers = sellerContext.name === ALL_SELLER_NAME;
-            for (const pp of productPlatforms) {
+            const total = productPlatforms.length;
+            const logEvery = 50;
+            const startTime = Date.now();
+            for (let i = 0; i < productPlatforms.length; i++) {
+                const pp = productPlatforms[i];
                 const decision = await evaluateDecision(pp.product_platform_id, {
                     sellerId,
                     useAllSellers,
@@ -389,6 +401,11 @@ async function evaluateAllDecisions(options = {}) {
                     seller_id: sellerId,
                     ...decision
                 });
+                if ((i + 1) % logEvery === 0 || i + 1 === total) {
+                    const elapsedMs = Date.now() - startTime;
+                    const elapsedSec = Math.round(elapsedMs / 1000);
+                    console.log(`⏳ Evaluated ${i + 1}/${total} (${elapsedSec}s)`);
+                }
             }
         } else {
             const platformIds = [...new Set(productPlatforms.map(row => row.platform_id))];
@@ -408,8 +425,12 @@ async function evaluateAllDecisions(options = {}) {
                 map[s.platform_id].push(s);
                 return map;
             }, {});
+            const total = productPlatforms.length;
+            const logEvery = 50;
+            const startTime = Date.now();
             
-            for (const pp of productPlatforms) {
+            for (let i = 0; i < productPlatforms.length; i++) {
+                const pp = productPlatforms[i];
                 const platformSellers = sellersByPlatform[pp.platform_id] || [];
                 
                 for (const seller of platformSellers) {
@@ -427,6 +448,11 @@ async function evaluateAllDecisions(options = {}) {
                         seller_id: seller.seller_id,
                         ...decision
                     });
+                }
+                if ((i + 1) % logEvery === 0 || i + 1 === total) {
+                    const elapsedMs = Date.now() - startTime;
+                    const elapsedSec = Math.round(elapsedMs / 1000);
+                    console.log(`⏳ Evaluated ${i + 1}/${total} (${elapsedSec}s)`);
                 }
             }
         }

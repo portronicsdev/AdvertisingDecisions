@@ -6,6 +6,8 @@ require('dotenv').config();
 const uploadRoutes = require('./routes/upload');
 const decisionRoutes = require('./routes/decisions');
 const sellerRoutes = require('./routes/sellers');
+const dataRoutes = require('./routes/data');
+const uploadLogRoutes = require('./routes/uploads');
 const { runDecisionJob } = require('./jobs/decisionJob');
 
 const app = express();
@@ -20,6 +22,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/upload', uploadRoutes);
 app.use('/api/decisions', decisionRoutes);
 app.use('/api/sellers', sellerRoutes);
+app.use('/api/data', dataRoutes);
+app.use('/api/uploads', uploadLogRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

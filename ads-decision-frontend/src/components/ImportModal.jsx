@@ -45,10 +45,32 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
   const [platform, setPlatform] = useState('');
   const [sellersLoading, setSellersLoading] = useState(false);
   const [sellerError, setSellerError] = useState('');
+  const [rangePreset, setRangePreset] = useState('month');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [rangeStart, setRangeStart] = useState('');
+  const [rangeEnd, setRangeEnd] = useState('');
 
   const importer = tableType ? getImporter(tableType) : null;
   const template = importer?.template || null;
   const needsSeller = importer?.needsSeller || false;
+  const needsDateRange = importer?.needsDateRange || false;
+
+  const getPresetRange = (preset) => {
+    const today = new Date();
+    const end = new Date(today);
+    const start = new Date(today);
+    if (preset === 'yesterday') {
+      start.setDate(today.getDate() - 1);
+      end.setDate(today.getDate() - 1);
+    } else if (preset === 'last7') {
+      start.setDate(today.getDate() - 6);
+    } else if (preset === 'month') {
+      start.setDate(1);
+    }
+    const toISO = (date) => date.toISOString().split('T')[0];
+    return { start: toISO(start), end: toISO(end) };
+  };
 
   // Handle escape key to close modal
   useEffect(() => {
@@ -89,6 +111,20 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
 
     fetchSellers();
   }, [open, tableType]);
+
+  useEffect(() => {
+    if (!open || !needsDateRange) return;
+    const stored = localStorage.getItem(`rangePreset:${tableType}`);
+    const preset = stored || 'month';
+    setRangePreset(preset);
+    if (preset !== 'custom') {
+      const { start, end } = getPresetRange(preset);
+      setRangeStart(start);
+      setRangeEnd(end);
+      setCustomStart('');
+      setCustomEnd('');
+    }
+  }, [open, tableType, needsDateRange]);
 
   if (!open || !tableType) return null;
 
@@ -229,6 +265,11 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
       setErrors(['Please select a seller']);
       return;
     }
+    
+    if (needsDateRange && (!rangeStart || !rangeEnd)) {
+      setErrors(['Please select a date range']);
+      return;
+    }
 
     console.log('Seller ID for import:', sellerId);
 
@@ -240,6 +281,12 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
       formData.append('file', file);
       if (needsSeller) {
         formData.append('seller_id', sellerId);
+      }
+      if (needsDateRange) {
+        formData.append('range_start', rangeStart || '');
+        formData.append('range_end', rangeEnd || '');
+        formData.append('range_label', rangePreset);
+        localStorage.setItem(`rangePreset:${tableType}`, rangePreset);
       }
 
       const response = await axios.post(
@@ -299,6 +346,11 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
     setWarnings([]);
     setSellerId('');
     setSellerError('');
+    setRangePreset('month');
+    setCustomStart('');
+    setCustomEnd('');
+    setRangeStart('');
+    setRangeEnd('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -311,10 +363,28 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
     return Object.keys(parsedData.items[0]).filter(key => key !== 'rowNumber');
   };
 
+  const formatExcelSerialDate = (value) => {
+    const num = Number(value);
+    if (Number.isNaN(num)) return null;
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    const date = new Date(excelEpoch + Math.round(num) * 86400000);
+    const yyyy = date.getUTCFullYear();
+    const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(date.getUTCDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   const formatCellValue = (value, key) => {
     if (value === null || value === undefined || value === '') return '—';
-    if (key.includes('date')) {
-      return String(value);
+    const keyLower = String(key || '').toLowerCase();
+    const isDateLike = keyLower.includes('date') || keyLower.includes('period') || keyLower.includes('snapshot');
+    if (isDateLike) {
+      const asString = String(value).trim();
+      if (/^\d+(\.\d+)?$/.test(asString)) {
+        const converted = formatExcelSerialDate(asString);
+        return converted || asString;
+      }
+      return asString;
     }
     if (key.includes('qty') || key.includes('units') || key.includes('count')) {
       const num = Number(value);
@@ -375,6 +445,61 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
               {sellerError && (
                 <p className="import-modal-help-text">{sellerError}</p>
               )}
+            </div>
+          )}
+
+          {needsDateRange && (
+            <div className="import-modal-section">
+              <label className="import-modal-label">Data Range</label>
+              <div className="import-modal-range">
+                <select
+                  className="import-modal-file-input"
+                  value={rangePreset}
+                  onChange={(e) => {
+                    const preset = e.target.value;
+                    setRangePreset(preset);
+                    if (preset !== 'custom') {
+                      const { start, end } = getPresetRange(preset);
+                      setRangeStart(start);
+                      setRangeEnd(end);
+                      setCustomStart('');
+                      setCustomEnd('');
+                    }
+                  }}
+                  disabled={importing}
+                >
+                  <option value="month">This Month</option>
+                  <option value="yesterday">Yesterday</option>
+                  <option value="last7">Last 7 Days</option>
+                  <option value="custom">Custom</option>
+                </select>
+                {rangePreset === 'custom' && (
+                  <div className="import-modal-range-custom">
+                    <input
+                      type="date"
+                      value={customStart}
+                      onChange={(e) => {
+                        setCustomStart(e.target.value);
+                        setRangeStart(e.target.value);
+                      }}
+                      disabled={importing}
+                    />
+                    <span>to</span>
+                    <input
+                      type="date"
+                      value={customEnd}
+                      onChange={(e) => {
+                        setCustomEnd(e.target.value);
+                        setRangeEnd(e.target.value);
+                      }}
+                      disabled={importing}
+                    />
+                  </div>
+                )}
+              </div>
+              <p className="import-modal-help-text">
+                Selected range: {rangeStart || '—'} → {rangeEnd || '—'}
+              </p>
             </div>
           )}
 

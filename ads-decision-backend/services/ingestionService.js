@@ -46,6 +46,7 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
             
             try {
                 const mappedRow = await rowMapper(row);
+               
                 if (mappedRow) {
                     rows.push(mappedRow);
                     rowCount++;

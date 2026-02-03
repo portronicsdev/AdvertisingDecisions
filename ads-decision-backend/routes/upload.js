@@ -247,6 +247,24 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
             // Don't fail the upload if decision job fails
         }*/
         
+        const rangeStart = req.body.range_start || null;
+        const rangeEnd = req.body.range_end || null;
+        const rangeLabel = req.body.range_label || null;
+        if (['sales', 'inventory', 'ad-performance'].includes(tableType)) {
+            const { error: logError } = await supabase
+                .from('upload_logs')
+                .insert({
+                    table_type: tableType,
+                    seller_id: sellerId || null,
+                    range_start: rangeStart,
+                    range_end: rangeEnd,
+                    range_label: rangeLabel
+                });
+            if (logError) {
+                console.error('Upload log insert failed:', logError);
+            }
+        }
+
         res.json({
             success: true,
             message: `Successfully ingested ${result.rowCount} rows into ${tableName}`,

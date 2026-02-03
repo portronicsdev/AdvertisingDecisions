@@ -105,6 +105,17 @@ CREATE TABLE IF NOT EXISTS decisions (
     UNIQUE(product_platform_id, seller_id)
 );
 
+-- Upload logs (tracks last uploaded ranges)
+CREATE TABLE IF NOT EXISTS upload_logs (
+    upload_id SERIAL PRIMARY KEY,
+    table_type VARCHAR(100) NOT NULL,
+    seller_id INTEGER REFERENCES sellers(seller_id) ON DELETE SET NULL,
+    range_start DATE,
+    range_end DATE,
+    range_label VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
 CREATE INDEX IF NOT EXISTS idx_product_platforms_product ON product_platforms(product_id);
@@ -128,4 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_ratings_date ON ratings_facts(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_decisions_product_platform ON decisions(product_platform_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_seller ON decisions(seller_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_evaluated_at ON decisions(evaluated_at);
+CREATE INDEX IF NOT EXISTS idx_upload_logs_table_type ON upload_logs(table_type);
+CREATE INDEX IF NOT EXISTS idx_upload_logs_seller ON upload_logs(seller_id);
+CREATE INDEX IF NOT EXISTS idx_upload_logs_created_at ON upload_logs(created_at);
 

@@ -9,16 +9,23 @@ async function runDecisionJob(options = {}) {
         console.log('🔄 Starting decision job...');
         const startTime = Date.now();
         const { sellerId } = options;
+        console.log(`🔎 Evaluating decisions${sellerId ? ` for seller ${sellerId}` : ''}...`);
         const decisions = await evaluateAllDecisions({ sellerId });
+        console.log(`🧾 Evaluated ${decisions.length} decisions. Saving...`);
         
         // Save all decisions
-        for (const decision of decisions) {
+        const logEvery = 50;
+        for (let i = 0; i < decisions.length; i++) {
+            const decision = decisions[i];
             await saveDecision(
                 decision.product_platform_id,
                 decision.seller_id,
                 decision.decision,
                 decision.reason
             );
+            if ((i + 1) % logEvery === 0 || i + 1 === decisions.length) {
+                console.log(`💾 Saved ${i + 1}/${decisions.length}`);
+            }
         }
         
         const duration = Date.now() - startTime;

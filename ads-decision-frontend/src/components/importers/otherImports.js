@@ -103,6 +103,7 @@ const otherImports = {
       filename: 'Ad_Performance_Template.xlsx',
       description: 'Ad spend and revenue data. Use ASIN (or Platform SKU). Date can be used for both Period Start/End.'
     },
+    needsDateRange: true,
     columnMap: {
       platformSku: ['Platform SKU', 'ASIN'],
       date: ['Date'],

@@ -1,6 +1,7 @@
 const inventoryImport = {
   tableType: 'inventory',
   needsSeller: true,
+  needsDateRange: true,
   template: {
     headers: ['SKU', 'Platform', 'Platform SKU', 'Snapshot Date (YYYY-MM-DD)', 'Inventory Units'],
     sample: [

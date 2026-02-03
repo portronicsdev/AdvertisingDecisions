@@ -70,16 +70,60 @@ async function loadProductsCache() {
     return productsCache;
 }
 
-function parseReportDate(value) {
-    if (!value) return null;
+function normalizeDate(value) {
+    if (value === null || value === undefined || value === '') return null;
     const input = String(value).trim();
     if (!input) return null;
+
+    // Excel serial date (e.g., 46052)
+    if (/^\d+(\.\d+)?$/.test(input)) {
+        const serial = parseFloat(input);
+        if (!Number.isNaN(serial)) {
+            const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+            const date = new Date(excelEpoch.getTime() + Math.round(serial) * 86400000);
+            const yyyy = date.getUTCFullYear();
+            const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(date.getUTCDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+        }
+    }
+
+    // ISO format
     if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
-    const match = input.match(/^(\d{1,2})\s*([A-Za-z]{3})\s*['’]?(\d{2})$/);
-    if (!match) return null;
-    const day = parseInt(match[1], 10);
-    const monthStr = match[2].toLowerCase();
-    const year = 2000 + parseInt(match[3], 10);
+
+    // DD-MM-YYYY
+    const dashMatch = input.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (dashMatch) {
+        const day = parseInt(dashMatch[1], 10);
+        const month = parseInt(dashMatch[2], 10);
+        const year = parseInt(dashMatch[3], 10);
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+            const mm = String(month).padStart(2, '0');
+            const dd = String(day).padStart(2, '0');
+            return `${year}-${mm}-${dd}`;
+        }
+    }
+
+    // MM/DD/YY or MM/DD/YYYY
+    const slashMatch = input.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+    if (slashMatch) {
+        const month = parseInt(slashMatch[1], 10);
+        const day = parseInt(slashMatch[2], 10);
+        let year = parseInt(slashMatch[3], 10);
+        if (year < 100) year += 2000;
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+            const mm = String(month).padStart(2, '0');
+            const dd = String(day).padStart(2, '0');
+            return `${year}-${mm}-${dd}`;
+        }
+    }
+
+    // 1Jan'26
+    const shortMatch = input.match(/^(\d{1,2})\s*([A-Za-z]{3})\s*['’]?(\d{2})$/);
+    if (!shortMatch) return null;
+    const day = parseInt(shortMatch[1], 10);
+    const monthStr = shortMatch[2].toLowerCase();
+    const year = 2000 + parseInt(shortMatch[3], 10);
     const monthMap = {
         jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
         jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
@@ -222,9 +266,9 @@ async function mapSalesFactRow(row, context = {}) {
     
     const sku = normalizeSku(row['SKU'] || '');
     const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
-    const dateReport = parseReportDate(row['Date Report'] || row['Date'] || '');
-    const periodStart = row['Period Start (YYYY-MM-DD)'] || row['Period Start'] || dateReport || null;
-    const periodEnd = row['Period End (YYYY-MM-DD)'] || row['Period End'] || dateReport || null;
+    const dateReport = normalizeDate(row['Date Report'] || row['Date'] || '');
+    const periodStart = normalizeDate(row['Period Start (YYYY-MM-DD)'] || row['Period Start'] || dateReport || null);
+    const periodEnd = normalizeDate(row['Period End (YYYY-MM-DD)'] || row['Period End'] || dateReport || null);
     if (!sku && !platformSku) {
         throw new Error('SKU or Platform SKU is required');
     }
@@ -252,8 +296,8 @@ async function mapInventoryFactRow(row, context = {}) {
     }
     const sku = normalizeSku(row['SKU'] || '');
     const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
-    const dateReport = parseReportDate(row['Date Report'] || row['Date'] || '');
-    const snapshotDate = row['Snapshot Date (YYYY-MM-DD)'] || row['Snapshot Date'] || dateReport || null;
+    const dateReport = normalizeDate(row['Date Report'] || row['Date'] || '');
+    const snapshotDate = normalizeDate(row['Snapshot Date (YYYY-MM-DD)'] || row['Snapshot Date'] || dateReport || null);
     if (!sku && !platformSku) {
         throw new Error('SKU or Platform SKU is required');
     }
@@ -292,7 +336,7 @@ async function mapCompanyInventoryFactRow(row) {
     
     return {
         product_id: productId, // PostgreSQL product_id (INTEGER)
-        snapshot_date: row['Snapshot Date'] || null,
+        snapshot_date: normalizeDate(row['Snapshot Date'] || null),
         inventory_units: parseInt(row['Inventory Units'] || 0),
         location: row['Location'] || null
     };
@@ -305,7 +349,7 @@ async function mapAdPerformanceFactRow(row) {
     const productPlatformId = await getProductPlatformIdByPlatformSku(row);
     if (!productPlatformId) return null;
     
-    const dateValue = row['Date'] || null;
+    const dateValue = normalizeDate(row['Date'] || null);
 
     // Get ad_type (sp or sd)
     const adType = (row['Ad Type'] || '').toLowerCase().trim();
@@ -316,8 +360,8 @@ async function mapAdPerformanceFactRow(row) {
     
     return {
         product_platform_id: productPlatformId,
-        period_start_date: dateValue || row['Period Start'] || null,
-        period_end_date: dateValue || row['Period End'] || null,
+        period_start_date: normalizeDate(dateValue || row['Period Start'] || null),
+        period_end_date: normalizeDate(dateValue || row['Period End'] || null),
         spend: parseFloat(row['Spend'] || 0),
         revenue: parseFloat(row['Revenue'] || 0),
         ad_type: adType
@@ -333,7 +377,7 @@ async function mapRatingsFactRow(row) {
     
     return {
         product_platform_id: productPlatformId,
-        snapshot_date: row['Snapshot Date'] || null,
+        snapshot_date: normalizeDate(row['Snapshot Date'] || null),
         rating: parseFloat(row['Rating'] || 0),
         review_count: parseInt(row['Review Count'] || 0)
     };

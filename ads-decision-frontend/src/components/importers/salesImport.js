@@ -1,6 +1,7 @@
 const salesImport = {
   tableType: 'sales',
   needsSeller: true,
+  needsDateRange: true,
   template: {
     headers: ['SKU', 'Platform', 'Platform SKU', 'Period Start (YYYY-MM-DD)', 'Period End (YYYY-MM-DD)', 'Units Sold'],
     sample: [
@@ -17,7 +18,7 @@ const salesImport = {
     periodStart: ['Period Start (YYYY-MM-DD)'],
     periodEnd: ['Period End (YYYY-MM-DD)'],
     dateReport: ['Date Report', 'Date'],
-    unitsSold: ['Units']
+    unitsSold: ['Units Sold']
   },
   requiredColumns: ['unitsSold'],
   validateColumns(columns) {
