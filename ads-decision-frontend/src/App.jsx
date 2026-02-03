@@ -13,10 +13,14 @@ function App() {
   const [navPinned, setNavPinned] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [tabCounts, setTabCounts] = useState({});
+  const [decisionRunning, setDecisionRunning] = useState(false);
+  const [decisionSeller, setDecisionSeller] = useState('');
+  const [decisionSellers, setDecisionSellers] = useState([]);
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
   const menuItems = useMemo(() => ([
+    { key: 'decisions', label: 'Decisions', tableType: 'decisions' },
     { key: 'platforms', label: 'Platforms', tableType: 'platforms' },
     { key: 'product-platforms', label: 'Products in Platforms', tableType: 'product-platforms' },
     { key: 'sellers', label: 'Sellers', tableType: 'sellers' },
@@ -36,6 +40,24 @@ function App() {
   useEffect(() => {
     localStorage.setItem('navPinned', String(navPinned));
   }, [navPinned]);
+
+  useEffect(() => {
+    let isActive = true;
+    const fetchSellers = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/sellers`);
+        if (!isActive) return;
+        setDecisionSellers(response.data?.sellers || []);
+      } catch (err) {
+        if (!isActive) return;
+        setDecisionSellers([]);
+      }
+    };
+    fetchSellers();
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -74,7 +96,34 @@ function App() {
     setRefreshKey(prev => prev + 1);
   };
 
+  const handleRunDecisionJob = async () => {
+    try {
+      setDecisionRunning(true);
+      setError(null);
+      const payload = {};
+      if (decisionSeller) payload.seller_id = decisionSeller;
+      const response = await axios.post(`${API_BASE_URL}/api/decisions/run`, payload);
+      setSuccess(`Decision job completed: ${response.data.yes} YES, ${response.data.no} NO`);
+      setTimeout(() => setSuccess(null), 5000);
+      setRefreshKey(prev => prev + 1);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to run decision job');
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setDecisionRunning(false);
+    }
+  };
+
   const columnsByTab = {
+    decisions: [
+      { key: 'product_name', label: 'Product' },
+      { key: 'sku', label: 'SKU' },
+      { key: 'platform_name', label: 'Platform' },
+      { key: 'seller_name', label: 'Seller' },
+      { key: 'decision', label: 'Decision', render: (row) => (row.decision ? 'YES' : 'NO') },
+      { key: 'reason', label: 'Reason' },
+      { key: 'evaluated_at', label: 'Evaluated', render: (row) => new Date(row.evaluated_at).toLocaleString() }
+    ],
     platforms: [
       { key: 'name', label: 'Platform' },
       { key: 'created_at', label: 'Created', render: (row) => new Date(row.created_at).toLocaleDateString() }
@@ -129,6 +178,7 @@ function App() {
 
   const activeConfig = menuItems.find(item => item.key === activeTab) || menuItems[0];
   const activeColumns = columnsByTab[activeConfig.key] || [];
+  const isDecisions = activeConfig.key === 'decisions';
 
   return (
     <div className="app-shell">
@@ -191,9 +241,32 @@ function App() {
           title={activeConfig.label}
           tableType={activeConfig.tableType}
           columns={activeColumns}
-          showUpload={true}
+          showUpload={!isDecisions}
           onOpenImport={handleOpenImport}
           refreshKey={refreshKey}
+          headerActions={isDecisions ? (
+            <div className="decision-actions">
+              <select
+                value={decisionSeller}
+                onChange={(e) => setDecisionSeller(e.target.value)}
+                className="decision-select"
+              >
+                <option value="">All Sellers</option>
+                {decisionSellers.map(seller => (
+                  <option key={seller.seller_id} value={seller.seller_id}>
+                    {seller.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn-primary"
+                onClick={handleRunDecisionJob}
+                disabled={decisionRunning}
+              >
+                {decisionRunning ? 'Running...' : 'Run Decision Job'}
+              </button>
+            </div>
+          ) : null}
         />
       </main>
 

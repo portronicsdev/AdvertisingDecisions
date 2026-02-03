@@ -172,6 +172,25 @@ code {
   margin-bottom: 12px;
 }
 
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.decision-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.decision-select {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  font-size: 12px;
+}
+
 .page-header h2 {
   font-size: 16px;
   margin-bottom: 4px;

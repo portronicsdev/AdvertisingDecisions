@@ -188,6 +188,40 @@ const getConfig = (tableType) => {
                 review_count: row.review_count,
                 created_at: row.created_at
             })
+        },
+        decisions: {
+            table: 'decisions',
+            select: `
+                id,
+                decision,
+                reason,
+                evaluated_at,
+                sellers:sellers!inner(
+                    name
+                ),
+                product_platforms:product_platforms!inner(
+                    platform_sku,
+                    platforms:platforms!inner(
+                        name
+                    ),
+                    products:products!inner(
+                        sku,
+                        product_name
+                    )
+                )
+            `,
+            order: { column: 'evaluated_at', ascending: false },
+            mapRow: row => ({
+                id: row.id,
+                platform_name: row.product_platforms?.platforms?.name,
+                seller_name: row.sellers?.name,
+                sku: row.product_platforms?.products?.sku,
+                product_name: row.product_platforms?.products?.product_name,
+                platform_sku: row.product_platforms?.platform_sku,
+                decision: row.decision,
+                reason: row.reason,
+                evaluated_at: row.evaluated_at
+            })
         }
     };
 

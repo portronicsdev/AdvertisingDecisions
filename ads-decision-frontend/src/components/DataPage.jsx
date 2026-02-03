@@ -16,7 +16,8 @@ export default function DataPage({
   columns,
   showUpload,
   onOpenImport,
-  refreshKey = 0
+  refreshKey = 0,
+  headerActions = null
 }) {
   const [rows, setRows] = useState([]);
   const [count, setCount] = useState(0);
@@ -105,11 +106,14 @@ export default function DataPage({
             Total: {count} • Last upload: {lastUploadText}
           </div>
         </div>
-        {showUpload && (
-          <button className="btn btn-primary" onClick={() => onOpenImport(tableType)}>
-            Upload {title}
-          </button>
-        )}
+        <div className="page-actions">
+          {headerActions}
+          {showUpload && (
+            <button className="btn btn-primary" onClick={() => onOpenImport(tableType)}>
+              Upload {title}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="page-controls">
