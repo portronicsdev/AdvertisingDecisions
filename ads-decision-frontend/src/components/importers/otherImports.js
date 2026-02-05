@@ -131,27 +131,30 @@ const otherImports = {
   },
   ratings: {
     template: {
-      headers: ['SKU', 'Platform', 'Snapshot Date (YYYY-MM-DD)', 'Rating', 'Review Count'],
+      headers: ['SKU', 'ASIN', 'Platform', 'Snapshot Date (YYYY-MM-DD)', 'Rating', 'Review Count'],
       sample: [
-        ['POR 1812', 'Amazon', '2024-01-15', 4.5, 150],
-        ['POR 1813', 'Flipkart', '2024-01-15', 4.2, 80],
+        ['POR 1812', 'B08XYZ123', 'Amazon', '2024-01-15', 4.5, 150],
+        ['POR 1813', '', 'Flipkart', '2024-01-15', 4.2, 80],
       ],
       filename: 'Ratings_Facts_Template.xlsx',
       description: 'Product ratings and review counts. SKU must exist in products table.'
     },
+    needsPlatform: true,
+    needsSnapshotDate: true,
     columnMap: {
       sku: ['SKU'],
+      platformSku: ['Platform SKU', 'ASIN'],
       platform: ['Platform'],
       snapshotDate: ['Snapshot Date (YYYY-MM-DD)'],
-      rating: ['Rating'],
+      rating: ['Ratings'],
       reviewCount: ['Review Count']
     },
-    requiredColumns: ['sku', 'platform', 'snapshotDate'],
+    requiredColumns: [],
     validateRow(item, rowNumber) {
       const errors = [];
-      if (!item.sku) errors.push(`Row ${rowNumber}: SKU is required`);
-      if (!item.platform) errors.push(`Row ${rowNumber}: Platform is required`);
-      if (!item.snapshotDate) errors.push(`Row ${rowNumber}: Snapshot Date is required`);
+      if (!item.sku && !item.platformSku) {
+        errors.push(`Row ${rowNumber}: SKU or ASIN is required`);
+      }
       return errors;
     }
   }

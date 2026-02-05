@@ -42,21 +42,27 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
   const [warnings, setWarnings] = useState([]);
   const [sellers, setSellers] = useState([]);
   const [sellerId, setSellerId] = useState('');
-  const [platform, setPlatform] = useState('');
   const [sellersLoading, setSellersLoading] = useState(false);
   const [sellerError, setSellerError] = useState('');
+  const [platforms, setPlatforms] = useState([]);
+  const [platformId, setPlatformId] = useState('');
+  const [platformsLoading, setPlatformsLoading] = useState(false);
+  const [platformError, setPlatformError] = useState('');
   const [adType, setAdType] = useState('');
   const [rangePreset, setRangePreset] = useState('month');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [rangeStart, setRangeStart] = useState('');
   const [rangeEnd, setRangeEnd] = useState('');
+  const [snapshotDate, setSnapshotDate] = useState('');
 
   const importer = tableType ? getImporter(tableType) : null;
   const template = importer?.template || null;
   const needsSeller = importer?.needsSeller || false;
   const needsDateRange = importer?.needsDateRange || false;
   const needsAdType = tableType === 'ad-performance';
+  const needsPlatform = importer?.needsPlatform || false;
+  const needsSnapshotDate = importer?.needsSnapshotDate || false;
 
   const getPresetRange = (preset) => {
     const today = new Date();
@@ -112,6 +118,32 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
     };
 
     fetchSellers();
+  }, [open, tableType]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!needsPlatform) {
+      setPlatforms([]);
+      setPlatformId('');
+      setPlatformError('');
+      return;
+    }
+
+    const fetchPlatforms = async () => {
+      setPlatformsLoading(true);
+      setPlatformError('');
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/data/platforms?limit=200&offset=0`);
+        setPlatforms(response.data?.rows || []);
+      } catch (err) {
+        setPlatformError(err.response?.data?.message || 'Failed to load platforms');
+        setPlatforms([]);
+      } finally {
+        setPlatformsLoading(false);
+      }
+    };
+
+    fetchPlatforms();
   }, [open, tableType]);
 
   useEffect(() => {
@@ -278,8 +310,18 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
       return;
     }
 
+    if (needsPlatform && !platformId) {
+      setErrors(['Please select a platform']);
+      return;
+    }
+
     if (needsDateRange && (!rangeStart || !rangeEnd)) {
       setErrors(['Please select a date range']);
+      return;
+    }
+    
+    if (needsSnapshotDate && !snapshotDate) {
+      setErrors(['Please select Snapshot Date']);
       return;
     }
 
@@ -304,6 +346,12 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
         formData.append('ad_type', adType);
         localStorage.setItem('adType', adType);
       }
+      if (needsPlatform) {
+        formData.append('platform_id', platformId);
+      }
+      if (needsSnapshotDate) {
+        formData.append('snapshot_date', snapshotDate);
+      }
 
       const response = await axios.post(
         `${API_BASE_URL}/api/upload/${tableType}`,
@@ -321,13 +369,28 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
       // Check if response indicates success
       if (response.data && response.data.success !== false) {
         const rowCount = response.data.rowCount || 0;
+        const errorRowCount = response.data.errorRowCount || 0;
+        const errorRows = response.data.errorRows || [];
+        if (errorRowCount > 0 && errorRows.length > 0) {
+          const errorLines = errorRows.map(err => `Row ${err.rowNum}: ${err.error}`);
+          setWarnings([
+            `Imported with ${errorRowCount} errors. Showing first ${errorRows.length}:`,
+            ...errorLines
+          ]);
+          alert(`⚠️ Imported ${rowCount} rows with errors`);
+          onSuccess?.();
+          return;
+        }
+        setWarnings([]);
         alert(`✅ Successfully imported ${rowCount} rows`);
         onSuccess?.();
         handleClose();
       } else {
         // Backend returned success: false or error
         const errorMessage = response.data?.message || response.data?.error || 'Import failed';
-        setErrors([errorMessage]);
+        const errorRows = response.data?.errorRows || [];
+        const errorLines = errorRows.map(err => `Row ${err.rowNum}: ${err.error}`);
+        setErrors([errorMessage, ...errorLines]);
       }
 
     } catch (err) {
@@ -362,7 +425,10 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
     setWarnings([]);
     setSellerId('');
     setSellerError('');
+    setPlatformId('');
+    setPlatformError('');
     setAdType('');
+    setSnapshotDate('');
     setRangePreset('month');
     setCustomStart('');
     setCustomEnd('');
@@ -462,6 +528,44 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
               {sellerError && (
                 <p className="import-modal-help-text">{sellerError}</p>
               )}
+            </div>
+          )}
+
+          {needsPlatform && (
+            <div className="import-modal-section">
+              <label className="import-modal-label">Select Platform</label>
+              <select
+                className="import-modal-file-input"
+                value={platformId}
+                onChange={(e) => setPlatformId(e.target.value)}
+                disabled={importing || platformsLoading}
+              >
+                <option value="">Select a platform</option>
+                {platforms.map(p => (
+                  <option key={p.platform_id} value={p.platform_id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              {platformsLoading && (
+                <p className="import-modal-help-text">Loading platforms…</p>
+              )}
+              {platformError && (
+                <p className="import-modal-help-text">{platformError}</p>
+              )}
+            </div>
+          )}
+
+          {needsSnapshotDate && (
+            <div className="import-modal-section">
+              <label className="import-modal-label">Snapshot Date</label>
+              <input
+                type="date"
+                className="import-modal-file-input"
+                value={snapshotDate}
+                onChange={(e) => setSnapshotDate(e.target.value)}
+                disabled={importing}
+              />
             </div>
           )}
 

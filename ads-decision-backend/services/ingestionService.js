@@ -25,6 +25,7 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
         let errorRowCount = 0;
         const errorRows = [];
         let batchCount = 0;
+        let resolved = false;
         const startTime = Date.now();
 
         const formatDuration = (ms) => {
@@ -40,6 +41,43 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
         const rowQueue = [];
         let processing = false;
         
+        const finalize = async (success, message) => {
+            if (resolved) return;
+            resolved = true;
+            try {
+                if (rows.length > 0) {
+                    await insertBatch(tableName, rows, batchCount);
+                    batchCount++;
+                }
+            } catch (batchError) {
+                console.error('Error inserting final batch:', batchError);
+                success = false;
+                message = batchError.message || message;
+            }
+
+            const totalElapsed = Date.now() - startTime;
+            console.log(`✅ All rows processed. Total mapped: ${rowCount}. Time: ${formatDuration(totalElapsed)}`);
+            console.log(`📊 Ingestion summary:`);
+            console.log(`   Raw rows read: ${rawRowCount}`);
+            console.log(`   Successfully mapped: ${rowCount}`);
+            console.log(`   Skipped (null): ${skippedRowCount}`);
+            console.log(`   Errors: ${errorRowCount}`);
+            console.log(`   Inserted: ${rowCount} (batches: ${batchCount})`);
+           
+
+            resolve({
+                success,
+                message,
+                rowCount,
+                batchCount,
+                rawRowCount,
+                skippedRowCount,
+                errorRowCount,
+                skippedRows,
+                errorRows
+            });
+        };
+
         const processNextRow = async () => {
             if (processing || rowQueue.length === 0) return;
             
@@ -83,13 +121,7 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
                     });
                 }
                 
-                // Don't reject immediately - continue processing but track errors
-                // Only reject if too many errors occur
-                if (errorRowCount > 10) {
-                    stream.destroy();
-                    reject(new Error(`Too many mapping errors (${errorRowCount}). Stopping processing. Last error: ${error.message}`));
-                    return;
-                }
+                // Continue processing; keep only a small sample of errors
             } finally {
                 processing = false;
                 // Process next row in queue
@@ -124,46 +156,16 @@ async function ingestCsv(csvPath, tableName, rowMapper, batchSize = 1000) {
                         console.log(`⏳ Still processing... Queue: ${rowQueue.length}, Processing: ${processing}, Mapped: ${rowCount}, Elapsed: ${formatDuration(elapsed)}`);
                     }
                 }
-                const totalElapsed = Date.now() - startTime;
-                console.log(`✅ All rows processed. Total mapped: ${rowCount}. Time: ${formatDuration(totalElapsed)}`);
-                
-                try {
-                    // Insert remaining rows
-                    if (rows.length > 0) {
-                        await insertBatch(tableName, rows, batchCount);
-                        batchCount++;
-                    }
-                    
-                    // Log summary
-                    console.log(`📊 Ingestion summary:`);
-                    console.log(`   Raw rows read: ${rawRowCount}`);
-                    console.log(`   Successfully mapped: ${rowCount}`);
-                    console.log(`   Skipped (null): ${skippedRowCount}`);
-                    console.log(`   Errors: ${errorRowCount}`);
-                    console.log(`   Inserted: ${rowCount} (batches: ${batchCount + (rows.length > 0 ? 1 : 0)})`);
-                    
-                    if (rowCount === 0) {
-                        const errorMsg = rawRowCount === 0 
-                            ? 'No rows found in the file (file may be empty or have only headers)'
-                            : `No valid rows found. ${rawRowCount} rows read, but all were skipped or had errors.`;
-                        reject(new Error(errorMsg));
-                        return;
-                    }
-                    
-                    if (errorRowCount > 0) {
-                        console.log(`⚠️  Warning: ${errorRowCount} rows had errors but processing continued`);
-                    }
-                    
-                    console.log(`✅ Ingested ${rowCount} rows into ${tableName}`);
-                   
-                    resolve({ rowCount, batchCount, rawRowCount, skippedRowCount, errorRowCount });
-                } catch (error) {
-                    console.error('Error in ingestion end handler:', error);
-                    reject(error);
-                }
+                const errorMsg = rowCount === 0
+                    ? (rawRowCount === 0
+                        ? 'No rows found in the file (file may be empty or have only headers)'
+                        : `No valid rows found. ${rawRowCount} rows read, but all were skipped or had errors.`)
+                    : null;
+                await finalize(!errorMsg, errorMsg || 'Ingestion completed');
             })
             .on('error', (error) => {
-                reject(error);
+                console.error('Stream error:', error);
+                finalize(false, error.message || 'Stream error');
             });
     });
 }

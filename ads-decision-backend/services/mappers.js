@@ -514,14 +514,38 @@ async function mapAdPerformanceFactRow(row, context = {}) {
 /**
  * Maps CSV row to ratings_facts table format
  */
-async function mapRatingsFactRow(row) {
-    const productPlatformId = await getProductPlatformId(row);
-    if (!productPlatformId) return null;
+async function mapRatingsFactRow(row, context = {}) {
+    const platformSku = normalizeSku(row['Platform SKU'] || row['ASIN'] || '');
+    const sku = normalizeSku(row['SKU'] || '');
+    let productPlatformId = null;
+
+    if (platformSku) {
+        productPlatformId = await getProductPlatformIdByPlatformSku({ 'Platform SKU': platformSku });
+        if (!productPlatformId) {
+            throw new Error(`Platform SKU/ASIN not found in product_platforms: "${platformSku}"`);
+        }
+    } else if (sku && context.platformId) {
+        await loadProductPlatformLookups();
+        productPlatformId = productPlatformBySku[`${context.platformId}::${sku}`] || null;
+        if (!productPlatformId) {
+            throw new Error(`SKU not found in product_platforms for platform ${context.platformId}: "${sku}"`);
+        }
+    } else {
+        productPlatformId = await getProductPlatformId(row);
+        if (!productPlatformId) {
+            throw new Error('Ratings requires SKU/ASIN with platform');
+        }
+    }
     
+    const snapshotDate = normalizeDate(row['Snapshot Date'] || context.snapshotDate || null);
+    if (!snapshotDate) {
+        throw new Error('Snapshot Date is required for ratings');
+    }
+
     return {
         product_platform_id: productPlatformId,
-        snapshot_date: normalizeDate(row['Snapshot Date'] || null),
-        rating: parseFloat(row['Rating'] || 0),
+        snapshot_date: snapshotDate,
+        rating: parseFloat(row['Ratings'] || 0),
         review_count: parseInt(row['Review Count'] || 0)
     };
 }

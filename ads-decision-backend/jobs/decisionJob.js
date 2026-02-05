@@ -10,8 +10,8 @@ async function runDecisionJob(options = {}) {
         const startTime = Date.now();
         const { sellerId } = options;
         console.log(`🔎 Evaluating decisions${sellerId ? ` for seller ${sellerId}` : ''}...`);
-        const decisions = await evaluateAllDecisions({ sellerId });
-        console.log(`🧾 Evaluated ${decisions.length} decisions. Saving...`);
+        const decisions = await evaluateAllDecisions({ sellerId, limit: 2 });
+        console.log(`🧾 Evaluated ${decisions.length} decision(s). Saving...`);
         
         // Save all decisions
         const logEvery = 50;

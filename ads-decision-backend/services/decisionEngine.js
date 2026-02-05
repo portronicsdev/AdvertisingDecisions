@@ -33,6 +33,7 @@ const applySkuFilters = (query, { sku, platformSku }) => {
 async function calculateSellerStockCoverage({ productPlatformId, platformId, sku, platformSku, sellerId, useAllSellers = false }) {
     const normalizedSku = normalizeKey(sku);
     const normalizedPlatformSku = normalizeKey(platformSku);
+    console.log('📊 Stock coverage input', { productPlatformId, platformId, sku: normalizedSku, platformSku: normalizedPlatformSku, sellerId, useAllSellers });
     // Get average daily sales from last 30 days
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -56,17 +57,23 @@ async function calculateSellerStockCoverage({ productPlatformId, platformId, sku
     
     if (salesError) {
         console.error('Error fetching sales data:', salesError);
-        return 999; // Assume infinite coverage on error
+        return null;
     }
     
+    if (!salesData || salesData.length === 0) {
+        console.log('📉 No sales data found');
+        return null;
+    }
+
     const totalUnits = (salesData || []).reduce((sum, row) => sum + (parseInt(row.units_sold) || 0), 0);
     const uniqueDates = new Set((salesData || []).map(row => row.period_start_date));
     const daysCount = uniqueDates.size || 1;
     const avgDailySales = totalUnits / daysCount;
+    console.log('📈 Sales calc', { totalUnits, daysCount, avgDailySales });
     
     if (avgDailySales === 0) {
-        // No sales data, assume infinite coverage
-        return 999;
+        console.log('📉 Avg daily sales is 0');
+        return null;
     }
     
     // Get latest inventory
@@ -89,9 +96,15 @@ async function calculateSellerStockCoverage({ productPlatformId, platformId, sku
         .limit(1)
         .single();
     
+    if (inventoryError) {
+        console.error('Error fetching inventory data:', inventoryError);
+        return null;
+    }
+    
     const currentInventory = inventoryData 
         ? parseInt(inventoryData.inventory_units) || 0 
         : 0;
+    console.log('📦 Inventory calc', { currentInventory });
     
     return currentInventory / avgDailySales;
 }
@@ -109,7 +122,10 @@ async function getCompanyInventory(productId) {
         .limit(1)
         .single();
     
-    if (!maxDateData) return 0;
+    if (!maxDateData) {
+        console.log('🏭 No company inventory found');
+        return 0;
+    }
     
     // Get sum of inventory for that date
     const { data: inventoryData } = await supabase
@@ -119,6 +135,7 @@ async function getCompanyInventory(productId) {
         .eq('snapshot_date', maxDateData.snapshot_date);
     
     const totalInventory = (inventoryData || []).reduce((sum, row) => sum + (parseInt(row.inventory_units) || 0), 0);
+    console.log('🏭 Company inventory calc', { totalInventory });
     return totalInventory;
 }
 
@@ -134,7 +151,9 @@ async function getLatestRating(productPlatformId) {
         .limit(1)
         .single();
     
-    return data ? parseFloat(data.rating) || 0 : 0;
+    const rating = data ? parseFloat(data.rating) || 0 : 0;
+    console.log('⭐ Latest rating', { productPlatformId, rating });
+    return rating;
 }
 
 /**
@@ -158,6 +177,7 @@ async function calculateROAS(productPlatformId) {
     
     const totalSpend = (data || []).reduce((sum, row) => sum + (parseFloat(row.spend) || 0), 0);
     const totalRevenue = (data || []).reduce((sum, row) => sum + (parseFloat(row.revenue) || 0), 0);
+    console.log('📊 ROAS calc', { totalSpend, totalRevenue });
     
     if (totalSpend === 0) {
         // No ad spend data, assume good ROAS
@@ -277,6 +297,7 @@ async function evaluateDecision(productPlatformId, options = {}) {
         const reasons = [];
         
         // 1. Inventory Gate
+        console.log('🚦 Inventory gate start', { productPlatformId, sellerId, platformId, sku, platformSku, useAllSellers });
         const stockCoverage = await calculateSellerStockCoverage({
             productPlatformId,
             platformId,
@@ -285,39 +306,56 @@ async function evaluateDecision(productPlatformId, options = {}) {
             sellerId,
             useAllSellers
         });
+        if (stockCoverage === null) {
+            console.log('🚦 Inventory gate failed: no sales/inventory data');
+            return {
+                decision: false,
+                reason: 'Inventory Gate FAILED: No sales/inventory data available'
+            };
+        }
         const companyInventory = await getCompanyInventory(productId);
+        console.log('🚦 Inventory gate inputs', { stockCoverage, companyInventory });
         
         if (stockCoverage < 7) {
             if (companyInventory === 0) {
+                console.log('🚦 Inventory gate failed: low stock and no company inventory');
                 return {
                     decision: false,
                     reason: `Inventory Gate FAILED: Seller stock coverage (${stockCoverage.toFixed(1)} days) < 7 days AND company inventory = 0`
                 };
             } else {
+                console.log('🚦 Inventory gate passed: low stock but company inventory available');
                 reasons.push(`Inventory Gate PASSED: Seller stock low (${stockCoverage.toFixed(1)} days) but company inventory available (${companyInventory} units)`);
             }
         } else {
+            console.log('🚦 Inventory gate passed: seller stock coverage >= 7 days');
             reasons.push(`Inventory Gate PASSED: Seller stock coverage (${stockCoverage.toFixed(1)} days) ≥ 7 days`);
         }
         
         // 2. Ratings Gate
+        console.log('⭐ Ratings gate start', { productPlatformId });
         const rating = await getLatestRating(productPlatformId);
         if (rating < 4.0) {
+            console.log('⭐ Ratings gate failed', { rating });
             return {
                 decision: false,
                 reason: `Ratings Gate FAILED: Rating (${rating.toFixed(2)}) < 4.0`
             };
         }
+        console.log('⭐ Ratings gate passed', { rating });
         reasons.push(`Ratings Gate PASSED: Rating (${rating.toFixed(2)}) ≥ 4.0`);
         
         // 3. Performance Gate
+        console.log('📊 Performance gate start', { productPlatformId });
         const roas = await calculateROAS(productPlatformId);
         if (roas <= 8) {
+            console.log('📊 Performance gate failed', { roas });
             return {
                 decision: false,
                 reason: `Performance Gate FAILED: ROAS (${roas.toFixed(2)}) ≤ 8`
             };
         }
+        console.log('📊 Performance gate passed', { roas });
         reasons.push(`Performance Gate PASSED: ROAS (${roas.toFixed(2)}) > 8`);
         
         // All gates passed
@@ -345,7 +383,7 @@ async function evaluateDecision(productPlatformId, options = {}) {
  */
 async function evaluateAllDecisions(options = {}) {
     try {
-        const { sellerId } = options;
+        const { sellerId, limit } = options;
         let sellerContext = null;
         let platformIdsFilter = null;
         console.log(`🧩 Loading product platforms${sellerId ? ` for seller ${sellerId}` : ''}...`);
@@ -378,16 +416,17 @@ async function evaluateAllDecisions(options = {}) {
         }
         
         const productPlatforms = data || [];
+        const limitedProductPlatforms = limit ? productPlatforms.slice(0, limit) : productPlatforms;
         console.log(`📦 Product-platforms: ${productPlatforms.length}`);
         const decisions = [];
         
         if (sellerId && sellerContext) {
             const useAllSellers = sellerContext.name === ALL_SELLER_NAME;
-            const total = productPlatforms.length;
+            const total = limitedProductPlatforms.length;
             const logEvery = 50;
             const startTime = Date.now();
-            for (let i = 0; i < productPlatforms.length; i++) {
-                const pp = productPlatforms[i];
+            for (let i = 0; i < limitedProductPlatforms.length; i++) {
+                const pp = limitedProductPlatforms[i];
                 const decision = await evaluateDecision(pp.product_platform_id, {
                     sellerId,
                     useAllSellers,
@@ -408,7 +447,7 @@ async function evaluateAllDecisions(options = {}) {
                 }
             }
         } else {
-            const platformIds = [...new Set(productPlatforms.map(row => row.platform_id))];
+            const platformIds = [...new Set(limitedProductPlatforms.map(row => row.platform_id))];
             await ensureAllSellers(platformIds);
             
             const { data: sellers, error: sellersError } = await supabase
@@ -425,12 +464,12 @@ async function evaluateAllDecisions(options = {}) {
                 map[s.platform_id].push(s);
                 return map;
             }, {});
-            const total = productPlatforms.length;
+            const total = limitedProductPlatforms.length;
             const logEvery = 50;
             const startTime = Date.now();
             
-            for (let i = 0; i < productPlatforms.length; i++) {
-                const pp = productPlatforms[i];
+            for (let i = 0; i < limitedProductPlatforms.length; i++) {
+                const pp = limitedProductPlatforms[i];
                 const platformSellers = sellersByPlatform[pp.platform_id] || [];
                 
                 for (const seller of platformSellers) {

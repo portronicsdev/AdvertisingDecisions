@@ -129,6 +129,17 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
             platformId = sellerData.platform_id;
             sellerId = parsedSellerId;
         }
+        if (tableType === 'ratings' && req.body.platform_id) {
+            const parsedPlatformId = parseInt(req.body.platform_id || '0', 10);
+            if (!parsedPlatformId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Invalid platform_id',
+                    message: 'platform_id is required for ratings uploads'
+                });
+            }
+            platformId = parsedPlatformId;
+        }
         
         const mapperMap = {
             'products': mapProductRow,
@@ -164,7 +175,8 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
         const context = {
             sellerId,
             platformId,
-            adType: (req.body.ad_type || '').toLowerCase().trim() || null
+            adType: (req.body.ad_type || '').toLowerCase().trim() || null,
+            snapshotDate: req.body.snapshot_date || null
         };
         
         const rowMapper = async (row) => {
@@ -221,6 +233,18 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
                 message: 'Invalid result from ingestion service'
             });
         }
+
+        if (result.success === false) {
+            return res.json({
+                success: false,
+                message: result.message || 'Ingestion failed',
+                rowCount: result.rowCount,
+                batchCount: result.batchCount,
+                skippedRowCount: result.skippedRowCount,
+                errorRowCount: result.errorRowCount,
+                errorRows: result.errorRows?.slice(0, 10) || []
+            });
+        }
         
         // Clean up temporary files (unless KEEP_CSV_FILES is enabled)
         try {
@@ -272,7 +296,8 @@ router.post('/:tableType', upload.single('file'), async (req, res) => {
             rowCount: result.rowCount,
             batchCount: result.batchCount,
             skippedRowCount: result.skippedRowCount,
-            errorRowCount: result.errorRowCount
+            errorRowCount: result.errorRowCount,
+            errorRows: result.errorRows?.slice(0, 10) || []
         });
         
     } catch (error) {
