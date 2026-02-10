@@ -58,11 +58,11 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
 
   const importer = tableType ? getImporter(tableType) : null;
   const template = importer?.template || null;
-  const needsSeller = importer?.needsSeller || false;
-  const needsDateRange = importer?.needsDateRange || false;
+  const needsSeller = tableType === 'sales' || tableType === 'inventory';
+  const needsDateRange = tableType === 'sales';
   const needsAdType = tableType === 'ad-performance';
-  const needsPlatform = importer?.needsPlatform || false;
-  const needsSnapshotDate = importer?.needsSnapshotDate || false;
+  const needsPlatform = false;
+  const needsSnapshotDate = tableType === 'inventory' || tableType === 'ratings';
 
   const getPresetRange = (preset) => {
     const today = new Date();
@@ -332,6 +332,7 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
 
     try {
       const formData = new FormData();
+      formData.append("platform", "Amazon")
       formData.append('file', file);
       if (needsSeller) {
         formData.append('seller_id', sellerId);

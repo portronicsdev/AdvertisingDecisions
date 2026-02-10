@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import ImportModal from './components/ImportModal';
 import DataPage from './components/DataPage';
+import ReportsPage from './components/Reports/ReportsPage';
+
 import './index.css';
 
 function App() {
@@ -28,7 +30,9 @@ function App() {
     { key: 'sales', label: 'Sales', tableType: 'sales' },
     { key: 'inventory', label: 'Inventory', tableType: 'inventory' },
     { key: 'ad-performance', label: 'Performance', tableType: 'ad-performance' },
-    { key: 'ratings', label: 'Ratings', tableType: 'ratings' }
+    { key: 'ratings', label: 'Ratings', tableType: 'ratings' },
+    { key: 'reports', label: 'Reports' },
+
   ]), []);
 
   useEffect(() => {
@@ -61,30 +65,55 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let isActive = true;
-    const fetchCounts = async () => {
-      try {
+  let isActive = true;
+
+  const fetchCounts = async () => {
+    try {
+        const validItems = menuItems.filter(item => {
+          if (!item.tableType) {
+            console.warn(`Skipping count fetch: no tableType for "${item.key}"`);
+            return false;
+          }
+          return true;
+        });
+
         const responses = await Promise.all(
-          menuItems.map(item =>
-            axios.get(`${API_BASE_URL}/api/data/${item.tableType}?limit=1&offset=0`)
+          validItems.map(item =>
+            axios.get(
+              `${API_BASE_URL}/api/data/${item.tableType}?limit=1&offset=0`
+            )
           )
         );
+
         if (!isActive) return;
+
         const nextCounts = {};
-        responses.forEach((res, idx) => {
-          nextCounts[menuItems[idx].key] = res.data?.count || 0;
+
+        // default 0 for all tabs
+        menuItems.forEach(item => {
+          nextCounts[item.key] = 0;
         });
+
+        // fill counts only for valid data-backed tabs
+        validItems.forEach((item, idx) => {
+          nextCounts[item.key] = responses[idx].data?.count || 0;
+        });
+
         setTabCounts(nextCounts);
       } catch (err) {
         if (!isActive) return;
+        console.error('Failed to fetch tab counts', err);
         setTabCounts({});
       }
     };
+
     fetchCounts();
+
     return () => {
       isActive = false;
     };
   }, [menuItems, refreshKey]);
+
 
   const handleOpenImport = (tableType) => {
     setImportTableType(tableType);
@@ -245,48 +274,56 @@ function App() {
           </div>
         </div>
 
-        <DataPage
-          title={activeConfig.label}
-          tableType={activeConfig.tableType}
-          columns={activeColumns}
-          showUpload={!isDecisions}
-          onOpenImport={handleOpenImport}
-          refreshKey={refreshKey}
-          headerActions={isDecisions ? (
-            <div className="decision-actions">
-              <select
-                value={decisionSeller}
-                onChange={(e) => setDecisionSeller(e.target.value)}
-                className="decision-select"
-              >
-                <option value="">All Sellers</option>
-                {decisionSellers.map(seller => (
-                  <option key={seller.seller_id} value={seller.seller_id}>
-                    {seller.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="btn btn-primary"
-                onClick={handleRunDecisionJob}
-                disabled={decisionRunning}
-              >
-                {decisionRunning ? 'Running...' : 'Run Decision Job'}
-              </button>
-            </div>
-          ) : null}
-        />
+        {activeTab === 'reports' ? (
+              <ReportsPage />
+            ) : (
+              <DataPage
+                title={activeConfig.label}
+                tableType={activeConfig.tableType}
+                columns={activeColumns}
+                showUpload={!isDecisions}
+                onOpenImport={handleOpenImport}
+                refreshKey={refreshKey}
+                headerActions={isDecisions ? (
+                  <div className="decision-actions">
+                    <select
+                      value={decisionSeller}
+                      onChange={(e) => setDecisionSeller(e.target.value)}
+                      className="decision-select"
+                    >
+                      <option value="">All Sellers</option>
+                      {decisionSellers.map(seller => (
+                        <option key={seller.seller_id} value={seller.seller_id}>
+                          {seller.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleRunDecisionJob}
+                      disabled={decisionRunning}
+                    >
+                      {decisionRunning ? 'Running...' : 'Run Decision Job'}
+                    </button>
+                  </div>
+                ) : null}
+              />
+            )}
+
       </main>
 
-      <ImportModal
-        open={importModalOpen}
-        onClose={() => {
-          setImportModalOpen(false);
-          setImportTableType(null);
-        }}
-        tableType={importTableType}
-        onSuccess={handleImportSuccess}
-      />
+      {activeTab !== 'reports' && (
+        <ImportModal
+          open={importModalOpen}
+          onClose={() => {
+            setImportModalOpen(false);
+            setImportTableType(null);
+          }}
+          tableType={importTableType}
+          onSuccess={handleImportSuccess}
+        />
+      )}
+
     </div>
   );
 }

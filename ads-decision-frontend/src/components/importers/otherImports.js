@@ -85,6 +85,8 @@ const otherImports = {
       inventoryUnits: ['Inventory Units'],
       location: ['Location (Optional)']
     },
+    needsSnapshotDate: true,
+    needsDateRange: false,
     requiredColumns: ['sku', 'snapshotDate'],
     validateRow(item, rowNumber) {
       const errors = [];
@@ -141,6 +143,7 @@ const otherImports = {
     },
     needsPlatform: true,
     needsSnapshotDate: true,
+    needsDateRange: false,
     columnMap: {
       sku: ['SKU'],
       platformSku: ['Platform SKU', 'ASIN'],

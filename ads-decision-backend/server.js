@@ -13,6 +13,20 @@ const { runDecisionJob } = require('./jobs/decisionJob');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// 🔥 GLOBAL LOGGER (HERE)
+app.use((req, res, next) => {
+    const startTime = Date.now();
+
+    res.on('finish', () => {
+        console.log(
+            `[HTTP] ${req.method} ${req.originalUrl} → ${res.statusCode}`
+        );
+    });
+
+    next();
+});
+
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -24,6 +38,8 @@ app.use('/api/decisions', decisionRoutes);
 app.use('/api/sellers', sellerRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/uploads', uploadLogRoutes);
+app.use('/api/reports', require('./routes/reports'));
+
 
 // Health check
 app.get('/health', (req, res) => {
