@@ -3,6 +3,7 @@ import axios from 'axios';
 import ImportModal from './components/ImportModal';
 import DataPage from './components/DataPage';
 import ReportsPage from './components/Reports/ReportsPage';
+import SlabLadder from './components/DELETE';
 
 import './index.css';
 
@@ -11,13 +12,16 @@ function App() {
   const [success, setSuccess] = useState(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importTableType, setImportTableType] = useState(null);
-  const [activeTab, setActiveTab] = useState('platforms');
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('activeTab') || 'platforms';
+  }); 
   const [navPinned, setNavPinned] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [tabCounts, setTabCounts] = useState({});
   const [decisionRunning, setDecisionRunning] = useState(false);
   const [decisionSeller, setDecisionSeller] = useState('');
   const [decisionSellers, setDecisionSellers] = useState([]);
+  
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -34,6 +38,10 @@ function App() {
     { key: 'reports', label: 'Reports' },
 
   ]), []);
+
+  useEffect(() => {
+  localStorage.setItem('activeTab', activeTab);
+}, [activeTab]);
 
   useEffect(() => {
     const saved = localStorage.getItem('navPinned');
