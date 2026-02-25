@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import { api } from './services/api';
+
 import ImportModal from './components/ImportModal';
 import DataPage from './components/DataPage';
 import ReportsPage from './components/Reports/ReportsPage';
-import SlabLadder from './components/DELETE';
 
 import './index.css';
 
@@ -14,16 +14,28 @@ function App() {
   const [importTableType, setImportTableType] = useState(null);
   const [activeTab, setActiveTab] = useState(() => {
     return localStorage.getItem('activeTab') || 'platforms';
-  }); 
+  });
   const [navPinned, setNavPinned] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [tabCounts, setTabCounts] = useState({});
   const [decisionRunning, setDecisionRunning] = useState(false);
   const [decisionSeller, setDecisionSeller] = useState('');
   const [decisionSellers, setDecisionSellers] = useState([]);
-  
+  const [syncingProducts, setSyncingProducts] = useState(false);
 
-  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+  /* ---------------- helpers ---------------- */
+
+  const showSuccess = (msg, time = 5000) => {
+    setSuccess(msg);
+    setTimeout(() => setSuccess(null), time);
+  };
+
+  const showError = (msg, time = 5000) => {
+    setError(msg);
+    setTimeout(() => setError(null), time);
+  };
+
+  /* ---------------- menu ---------------- */
 
   const menuItems = useMemo(() => ([
     { key: 'decisions', label: 'Decisions', tableType: 'decisions' },
@@ -36,12 +48,13 @@ function App() {
     { key: 'ad-performance', label: 'Performance', tableType: 'ad-performance' },
     { key: 'ratings', label: 'Ratings', tableType: 'ratings' },
     { key: 'reports', label: 'Reports' },
-
   ]), []);
 
+  /* ---------------- local storage ---------------- */
+
   useEffect(() => {
-  localStorage.setItem('activeTab', activeTab);
-}, [activeTab]);
+    localStorage.setItem('activeTab', activeTab);
+  }, [activeTab]);
 
   useEffect(() => {
     const saved = localStorage.getItem('navPinned');
@@ -54,60 +67,60 @@ function App() {
     localStorage.setItem('navPinned', String(navPinned));
   }, [navPinned]);
 
+  /* ---------------- fetch sellers ---------------- */
+
   useEffect(() => {
     let isActive = true;
+
     const fetchSellers = async () => {
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/sellers`);
+        const res = await api.get('/api/sellers');
         if (!isActive) return;
-        setDecisionSellers(response.data?.sellers || []);
+        setDecisionSellers(res.data?.sellers || []);
       } catch (err) {
         if (!isActive) return;
         setDecisionSellers([]);
       }
     };
+
     fetchSellers();
+
     return () => {
       isActive = false;
     };
   }, []);
 
-  useEffect(() => {
-  let isActive = true;
+  /* ---------------- fetch counts ---------------- */
 
-  const fetchCounts = async () => {
-    try {
-        const validItems = menuItems.filter(item => {
-          if (!item.tableType) {
-            console.warn(`Skipping count fetch: no tableType for "${item.key}"`);
-            return false;
-          }
-          return true;
-        });
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchCounts = async () => {
+      try {
+        const validItems = menuItems.filter(item => item.tableType);
 
         const responses = await Promise.all(
           validItems.map(item =>
-            axios.get(
-              `${API_BASE_URL}/api/data/${item.tableType}?limit=1&offset=0`
-            )
+            api.get(`/api/data/${item.tableType}`, {
+              limit: 1,
+              offset: 0
+            })
           )
         );
 
         if (!isActive) return;
 
         const nextCounts = {};
-
-        // default 0 for all tabs
         menuItems.forEach(item => {
           nextCounts[item.key] = 0;
         });
 
-        // fill counts only for valid data-backed tabs
         validItems.forEach((item, idx) => {
           nextCounts[item.key] = responses[idx].data?.count || 0;
         });
 
         setTabCounts(nextCounts);
+
       } catch (err) {
         if (!isActive) return;
         console.error('Failed to fetch tab counts', err);
@@ -122,6 +135,7 @@ function App() {
     };
   }, [menuItems, refreshKey]);
 
+  /* ---------------- handlers ---------------- */
 
   const handleOpenImport = (tableType) => {
     setImportTableType(tableType);
@@ -129,8 +143,7 @@ function App() {
   };
 
   const handleImportSuccess = () => {
-    setSuccess('Upload completed');
-    setTimeout(() => setSuccess(null), 3000);
+    showSuccess('Upload completed', 3000);
     setRefreshKey(prev => prev + 1);
   };
 
@@ -138,19 +151,54 @@ function App() {
     try {
       setDecisionRunning(true);
       setError(null);
+
       const payload = {};
       if (decisionSeller) payload.seller_id = decisionSeller;
-      const response = await axios.post(`${API_BASE_URL}/api/decisions/run`, payload);
-      setSuccess(`Decision job completed: ${response.data.yes} YES, ${response.data.no} NO`);
-      setTimeout(() => setSuccess(null), 5000);
+
+      const res = await api.post('/api/decisions/run', payload);
+
+      showSuccess(
+        `Decision job completed: ${res.data.yes} YES, ${res.data.no} NO`
+      );
+
       setRefreshKey(prev => prev + 1);
+
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to run decision job');
-      setTimeout(() => setError(null), 5000);
+      showError(
+        err.response?.data?.message ||
+        err.message ||
+        'Failed to run decision job'
+      );
     } finally {
       setDecisionRunning(false);
     }
   };
+
+  const handleSyncProducts = async () => {
+    try {
+      setSyncingProducts(true);
+      setError(null);
+
+      const res = await api.post('/api/sync/products');
+
+      showSuccess(
+        `Products synced: ${res.data.inserted || 0} added, ${res.data.updated || 0} updated`
+      );
+
+      setRefreshKey(prev => prev + 1);
+
+    } catch (err) {
+      showError(
+        err.response?.data?.message ||
+        err.message ||
+        'Failed to sync products'
+      );
+    } finally {
+      setSyncingProducts(false);
+    }
+  };
+
+  /* ---------------- columns ---------------- */
 
   const columnsByTab = {
     decisions: [
@@ -223,7 +271,11 @@ function App() {
 
   const activeConfig = menuItems.find(item => item.key === activeTab) || menuItems[0];
   const activeColumns = columnsByTab[activeConfig.key] || [];
+
   const isDecisions = activeConfig.key === 'decisions';
+  const isProducts = activeConfig.key === 'products';
+
+  /* ---------------- UI ---------------- */
 
   return (
     <div className="app-shell">
@@ -232,30 +284,27 @@ function App() {
           <div className="logo">Ads</div>
           {navPinned && <span className="logo-text">Decision</span>}
         </div>
+
         <nav className="sidebar-nav">
           {menuItems.map(item => (
-              <button
+            <button
               key={item.key}
               className={`nav-item ${activeTab === item.key ? 'active' : ''}`}
               onClick={() => setActiveTab(item.key)}
               title={item.label}
             >
               <span className="nav-dot" />
-                {navPinned && (
-                  <span>
-                    {item.label}
-                    <span className="nav-count">
-                      {tabCounts[item.key] ?? 0}
-                    </span>
-                  </span>
-                )}
+              {navPinned && (
+                <span>
+                  {item.label}
+                  <span className="nav-count">{tabCounts[item.key] ?? 0}</span>
+                </span>
+              )}
             </button>
           ))}
         </nav>
-        <button
-          className="pin-toggle"
-          onClick={() => setNavPinned(prev => !prev)}
-        >
+
+        <button className="pin-toggle" onClick={() => setNavPinned(prev => !prev)}>
           {navPinned ? '⟨⟨' : '⟩⟩'}
         </button>
       </aside>
@@ -270,12 +319,11 @@ function App() {
                 onClick={() => setActiveTab(item.key)}
               >
                 {item.label}
-                <span className="tab-count">
-                  {tabCounts[item.key] ?? 0}
-                </span>
+                <span className="tab-count">{tabCounts[item.key] ?? 0}</span>
               </button>
             ))}
           </div>
+
           <div className="topbar-status">
             {error && <div className="error">{error}</div>}
             {success && <div className="success">{success}</div>}
@@ -283,58 +331,67 @@ function App() {
         </div>
 
         {activeTab === 'reports' ? (
-              <ReportsPage />
-            ) : (
-              <DataPage
-                title={activeConfig.label}
-                tableType={activeConfig.tableType}
-                columns={activeColumns}
-                showUpload={!isDecisions}
-                onOpenImport={handleOpenImport}
-                refreshKey={refreshKey}
-                headerActions={isDecisions ? (
-                  <div className="decision-actions">
-                    <select
-                      value={decisionSeller}
-                      onChange={(e) => setDecisionSeller(e.target.value)}
-                      className="decision-select"
-                    >
-                      <option value="">All Sellers</option>
-                      {decisionSellers.map(seller => (
-                        <option key={seller.seller_id} value={seller.seller_id}>
-                          {seller.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="btn btn-primary"
-                      onClick={handleRunDecisionJob}
-                      disabled={decisionRunning}
-                    >
-                      {decisionRunning ? 'Running...' : 'Run Decision Job'}
-                    </button>
-                  </div>
-                ) : null}
-              />
-            )}
+          <ReportsPage />
+        ) : (
+          <DataPage
+            title={activeConfig.label}
+            tableType={activeConfig.tableType}
+            columns={activeColumns}
+            showUpload={!isDecisions && !isProducts}
+            onOpenImport={handleOpenImport}
+            refreshKey={refreshKey}
+            headerActions={
+              isDecisions ? (
+                <div className="decision-actions">
+                  <select
+                    value={decisionSeller}
+                    onChange={(e) => setDecisionSeller(e.target.value)}
+                    className="decision-select"
+                  >
+                    <option value="">All Sellers</option>
+                    {decisionSellers.map(seller => (
+                      <option key={seller.seller_id} value={seller.seller_id}>
+                        {seller.name}
+                      </option>
+                    ))}
+                  </select>
 
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleRunDecisionJob}
+                    disabled={decisionRunning}
+                  >
+                    {decisionRunning ? 'Running...' : 'Run Decision Job'}
+                  </button>
+                </div>
+              ) : isProducts ? (
+                <div className="product-actions">
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleSyncProducts}
+                    disabled={syncingProducts}
+                  >
+                    {syncingProducts ? 'Syncing...' : 'Get New Products'}
+                  </button>
+                </div>
+              ) : null
+            }
+          />
+        )}
       </main>
 
-      {activeTab !== 'reports' && (
+      {activeTab !== 'reports' && importModalOpen && (
         <ImportModal
           open={importModalOpen}
+          tableType={importTableType}
           onClose={() => {
             setImportModalOpen(false);
             setImportTableType(null);
           }}
-          tableType={importTableType}
-          onSuccess={handleImportSuccess}
         />
       )}
-
     </div>
   );
 }
 
 export default App;
-

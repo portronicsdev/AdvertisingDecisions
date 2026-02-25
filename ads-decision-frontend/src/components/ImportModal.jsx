@@ -1,669 +1,478 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import axios from 'axios';
+import { api } from '../services/api';
+import { getImporter } from '../importers';
 import './ImportModal.css';
-import salesImport from './importers/salesImport';
-import inventoryImport from './importers/inventoryImport';
-import otherImports from './importers/otherImports';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-
-const importerMap = {
-  sales: salesImport,
-  inventory: inventoryImport,
-  ...otherImports
-};
-
-const getImporter = (tableType) => importerMap[tableType] || null;
-
-const downloadTemplate = (tableType) => {
-  const importer = getImporter(tableType);
-  const template = importer?.template;
-  if (!template) return;
-
-  const templateData = [template.headers, ...template.sample];
-  const ws = XLSX.utils.aoa_to_sheet(templateData);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Data');
-
-  // Auto-size columns
-  const colWidths = template.headers.map(() => ({ wch: 20 }));
-  ws['!cols'] = colWidths;
-
-  XLSX.writeFile(wb, template.filename);
-};
 
 export default function ImportModal({ open, onClose, tableType, onSuccess }) {
   const fileInputRef = useRef(null);
+
+  const importer = getImporter(tableType) || {};
+
+  /* ---------------- states ---------------- */
+
   const [file, setFile] = useState(null);
   const [parsedData, setParsedData] = useState(null);
   const [errors, setErrors] = useState([]);
-  const [importing, setImporting] = useState(false);
   const [warnings, setWarnings] = useState([]);
-  const [sellers, setSellers] = useState([]);
+  const [importing, setImporting] = useState(false);
+
   const [sellerId, setSellerId] = useState('');
-  const [sellersLoading, setSellersLoading] = useState(false);
-  const [sellerError, setSellerError] = useState('');
-  const [platforms, setPlatforms] = useState([]);
-  const [platformId, setPlatformId] = useState('');
-  const [platformsLoading, setPlatformsLoading] = useState(false);
-  const [platformError, setPlatformError] = useState('');
+  const [platform, setPlatform] = useState('');
   const [adType, setAdType] = useState('');
-  const [rangePreset, setRangePreset] = useState('month');
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
-  const [rangeStart, setRangeStart] = useState('');
-  const [rangeEnd, setRangeEnd] = useState('');
   const [snapshotDate, setSnapshotDate] = useState('');
 
-  const importer = tableType ? getImporter(tableType) : null;
-  const template = importer?.template || null;
-  const needsSeller = tableType === 'sales' || tableType === 'inventory';
-  const needsDateRange = tableType === 'sales';
-  const needsAdType = tableType === 'ad-performance';
-  const needsPlatform = false;
-  const needsSnapshotDate = tableType === 'inventory' || tableType === 'ratings';
+  // platform dropdown
+  const [platforms, setPlatforms] = useState([]);
+  const [platformLoading, setPlatformLoading] = useState(false);
+  const [platformError, setPlatformError] = useState('');
 
-  const getPresetRange = (preset) => {
-    const today = new Date();
-    const end = new Date(today);
-    const start = new Date(today);
-    if (preset === 'yesterday') {
-      start.setDate(today.getDate() - 1);
-      end.setDate(today.getDate() - 1);
-    } else if (preset === 'last7') {
-      start.setDate(today.getDate() - 6);
-    } else if (preset === 'month') {
-      start.setDate(1);
-    }
-    const toISO = (date) => date.toISOString().split('T')[0];
-    return { start: toISO(start), end: toISO(end) };
-  };
+  // seller dropdown
+  const [sellers, setSellers] = useState([]);
+  const [sellerLoading, setSellerLoading] = useState(false);
+  const [sellerError, setSellerError] = useState('');
 
-  // Handle escape key to close modal
+  const [errorRows, setErrorRows] = useState([]);
+
+  /* ---------------- importer config ---------------- */
+
+  const {
+    title = '',
+    needsSeller = false,
+    needsPlatform = false,
+    needsSnapshotDate = false,
+    needsAdType = false,
+    template = null,
+    columnMap = {},
+    requiredColumns = [],
+    validateRow = null,
+    validateColumns = null,
+    uploadUrl = ''
+  } = importer;
+
+  /* ---------------- effects ---------------- */
+
+  // Reset when modal opens
   useEffect(() => {
     if (!open) return;
+
+    setFile(null);
+    setParsedData(null);
+    setErrors([]);
+    setWarnings([]);
+
+    setSellerId('');
+    setPlatform('');
+    setAdType('');
+    setSnapshotDate('');
+
+  }, [open]);
+
+  // Reset seller when platform changes
+  useEffect(() => {
+    setSellerId('');
+  }, [platform]);
+
+  // Escape close
+  useEffect(() => {
+    if (!open) return;
+
     const handleEscape = (e) => {
-      if (e.key === 'Escape' && !importing) {
-        handleClose();
-      }
+      if (e.key === 'Escape' && !importing) handleClose();
     };
+
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [open, importing]);
 
+  // Fetch platforms
   useEffect(() => {
-    if (!open) return;
-    if (!needsSeller) {
-      setSellers([]);
-      setSellerId('');
-      setSellerError('');
-      return;
-    }
-
-    const fetchSellers = async () => {
-      setSellersLoading(true);
-      setSellerError('');
-      try {
-        const response = await axios.get(`${API_BASE_URL}/api/sellers`);
-        const list = response.data?.sellers || [];
-        console.log('Fetched sellers:', list);
-        setSellers(list);
-      } catch (err) {
-        setSellerError(err.response?.data?.message || 'Failed to load sellers');
-        setSellers([]);
-      } finally {
-        setSellersLoading(false);
-      }
-    };
-
-    fetchSellers();
-  }, [open, tableType]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (!needsPlatform) {
-      setPlatforms([]);
-      setPlatformId('');
-      setPlatformError('');
-      return;
-    }
+    if (!open || !needsPlatform) return;
 
     const fetchPlatforms = async () => {
-      setPlatformsLoading(true);
-      setPlatformError('');
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/data/platforms?limit=200&offset=0`);
-        setPlatforms(response.data?.rows || []);
+        setPlatformLoading(true);
+        setPlatformError('');
+
+        const res = await api.get('/api/data/platforms', {
+          params: { limit: 200, offset: 0 }
+        });
+
+        setPlatforms(res.data?.rows || []);
       } catch (err) {
-        setPlatformError(err.response?.data?.message || 'Failed to load platforms');
+        setPlatformError(
+          err.response?.data?.message || 'Failed to load platforms'
+        );
         setPlatforms([]);
       } finally {
-        setPlatformsLoading(false);
+        setPlatformLoading(false);
       }
     };
 
     fetchPlatforms();
-  }, [open, tableType]);
+  }, [open, needsPlatform]);
 
+  // Fetch sellers
   useEffect(() => {
-    if (!open || !needsDateRange) return;
-    const stored = localStorage.getItem(`rangePreset:${tableType}`);
-    const preset = stored || 'month';
-    setRangePreset(preset);
-    if (preset !== 'custom') {
-      const { start, end } = getPresetRange(preset);
-      setRangeStart(start);
-      setRangeEnd(end);
-      setCustomStart('');
-      setCustomEnd('');
-    }
-  }, [open, tableType, needsDateRange]);
+    if (!open || !needsSeller) return;
 
-  useEffect(() => {
-    if (!open || !needsAdType) return;
-    setAdType('');
-  }, [open, needsAdType]);
+    const fetchSellers = async () => {
+      try {
+        setSellerLoading(true);
+        setSellerError('');
+
+        const res = await api.get('/api/sellers');
+
+        setSellers(res.data?.sellers || []);
+      } catch (err) {
+        setSellerError(
+          err.response?.data?.message || 'Failed to load sellers'
+        );
+        setSellers([]);
+      } finally {
+        setSellerLoading(false);
+      }
+    };
+
+    fetchSellers();
+  }, [open, needsSeller]);
+
+  /* ---------------- guards ---------------- */
 
   if (!open || !tableType) return null;
 
-  const handleFileSelect = (e) => {
-    const selectedFile = e.target.files[0];
-    if (!selectedFile) return;
+  /* ---------------- derived ---------------- */
 
-    if (!selectedFile.name.endsWith('.xlsx') && !selectedFile.name.endsWith('.xls')) {
-      setErrors(['Please select an Excel file (.xlsx or .xls)']);
+  const filteredSellers = sellers.filter(
+    s => !platform || s.platform_name === platform
+  );
+
+  /* ---------------- helpers ---------------- */
+
+  const downloadTemplate = () => {
+    if (!template) return;
+
+    const data = [template.headers, ...template.sample];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Data');
+
+    XLSX.writeFile(wb, template.filename);
+  };
+
+  const handleFileSelect = (e) => {
+    const selected = e.target.files[0];
+    if (!selected) return;
+
+    setErrors([]);
+    setWarnings([]);
+
+    if (!selected.name.endsWith('.xlsx') && !selected.name.endsWith('.xls')) {
+      setErrors(['Please select Excel file']);
       return;
     }
 
-    setFile(selectedFile);
-    parseExcelFile(selectedFile);
+    setFile(selected);
+    parseExcel(selected);
   };
 
-  const parseExcelFile = (file) => {
+  /* ---------------- excel parsing ---------------- */
+
+  const parseExcel = (file) => {
     const reader = new FileReader();
+
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
+        const wb = XLSX.read(data, { type: 'array' });
 
-        console.log('sellerId during parse:', sellerId);
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
-        // Get first sheet
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-
-        if (jsonData.length < 2) {
-          setErrors(['Excel file must have at least 2 rows (header + data)']);
-          setParsedData(null);
+        if (json.length < 2) {
+          setErrors(['Excel must have header + data']);
           return;
         }
 
-        // Parse header row (first row) - strict matching
-        const headers = jsonData[0].map(h => String(h || '').trim());
+        const headers = json[0].map(h => String(h).trim());
 
-        const columnMap = importer?.columnMap || {};
-
-        const findColumnIndex = (columnNames) => {
-          for (const name of columnNames) {
-            const index = headers.findIndex(h => h === name);
-            if (index >= 0) return index;
+        const findIndex = (names) => {
+          for (const n of names) {
+            const idx = headers.findIndex(h => h === n);
+            if (idx >= 0) return idx;
           }
           return -1;
         };
 
         const columns = {};
-        Object.keys(columnMap).forEach(key => {
-          columns[key] = findColumnIndex(columnMap[key]);
+        Object.keys(columnMap).forEach(k => {
+          columns[k] = findIndex(columnMap[k]);
         });
 
-        // Validate required columns
-        const requiredColumns = importer?.requiredColumns || [];
+        console.log('requiredColumns:', requiredColumns);
+        const missingCols = requiredColumns.filter(c => columns[c] === -1);
 
-        const missingColumns = [];
-        requiredColumns.forEach(col => {
-          if (columns[col] === -1) {
-            missingColumns.push(col);
-          }
-        });
+        if (validateColumns) {
+          missingCols.push(...validateColumns(columns));
+        }
 
-        const extraMissing = importer?.validateColumns?.(columns) || [];
-        missingColumns.push(...extraMissing);
+                console.log('requiredColumns:', requiredColumns);
+                console.log('columns:', columns);
+                console.log('missingCols:', missingCols);
+        
 
-        if (missingColumns.length > 0) {
-          setErrors([`Missing required columns: ${missingColumns.join(', ')}`]);
-          setParsedData(null);
+        if (missingCols.length) {
+          setErrors([`Missing columns: ${missingCols.join(', ')}`]);
           return;
         }
 
-        // Parse data rows
         const items = [];
-        const itemErrors = [];
-        const itemWarnings = [];
+        const errs = [];
+        const errorRowsLocal = [];
 
-        for (let i = 1; i < jsonData.length; i++) {
-          const row = jsonData[i];
-          if (!row || row.every(cell => !cell)) 
-          {
-            console.log(`Skipping empty row ${i + 1}`);
-            continue; // Skip empty rows
-          }
+        for (let i = 1; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.every(v => !v)) continue;
 
           const item = {};
-          let hasError = false;
 
-          // Extract data based on column indices
-          Object.keys(columns).forEach(key => {
-            const index = columns[key];
-            if (index >= 0 && index < row.length) {
-              item[key] = String(row[index] || '').trim();
-            }
+          Object.keys(columns).forEach(k => {
+            const idx = columns[k];
+            if (idx >= 0) item[k] = String(row[idx] || '').trim();
           });
 
-          const rowErrors = importer?.validateRow?.(item, i + 1) || [];
-          if (rowErrors.length > 0) {
-            itemErrors.push(...rowErrors);
-            hasError = true;
-          }
+          const rowErrors = validateRow?.(item, i + 1) || [];
 
-          if (!hasError) {
-            items.push({
+          if (rowErrors.length) {
+            errs.push(...rowErrors);
+
+            errorRowsLocal.push({
               ...item,
-              rowNumber: i + 1
+              error: rowErrors.join(', ')
             });
+          } else {
+            items.push(item);
           }
         }
 
-        if (items.length === 0) {
-          setErrors(['No valid items found in Excel file']);
-          setParsedData(null);
+        if (!items.length) {
+          setErrors(['No valid rows found']);
           return;
         }
 
-        setParsedData({ items, headers });
-        setErrors(itemErrors);
-        setWarnings(itemWarnings);
-
+        setParsedData({ items });
+        setErrors(errs);
+        setErrorRows(errorRowsLocal);
+        setWarnings([]);
       } catch (err) {
-        console.error('Error parsing Excel:', err);
-        setErrors([`Error parsing Excel file: ${err.message}`]);
-        setParsedData(null);
+        setErrors([err.message]);
       }
     };
+
     reader.readAsArrayBuffer(file);
   };
 
+  const downloadErrorFile = () => {
+    if (!errorRows.length) return;
+
+    const headers = Object.keys(errorRows[0]);
+
+    const data = [
+      headers,
+      ...errorRows.map(row => headers.map(h => row[h] || ''))
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Errors');
+
+    XLSX.writeFile(wb, `${tableType}_errors.xlsx`);
+  };
+
+  /* ---------------- import ---------------- */
+
   const handleImport = async () => {
-    if (!parsedData || !parsedData.items.length) {
-      alert('No items to import');
-      return;
-    }
+    if (importing) return;
+
+    if (!file) return;
 
     if (needsSeller && !sellerId) {
-      setErrors(['Please select a seller']);
-      return;
-    }
-    
-    if (needsAdType && !adType) {
-      setErrors(['Please select Ad Type']);
+      setErrors(['Select seller']);
       return;
     }
 
-    if (needsPlatform && !platformId) {
-      setErrors(['Please select a platform']);
+    if (needsPlatform && !platform) {
+      setErrors(['Select platform']);
       return;
     }
 
-    if (needsDateRange && (!rangeStart || !rangeEnd)) {
-      setErrors(['Please select a date range']);
-      return;
-    }
-    
     if (needsSnapshotDate && !snapshotDate) {
-      setErrors(['Please select Snapshot Date']);
+      setErrors(['Select snapshot date']);
       return;
     }
 
-    console.log('Seller ID for import:', sellerId);
+    if (needsAdType && !adType) {
+      setErrors(['Select ad type']);
+      return;
+    }
 
-    setImporting(true);
-    setErrors([]);
+    if (!uploadUrl) {
+      setErrors(['Upload not configured']);
+      return;
+    }
 
     try {
+      setImporting(true);
+      setErrors([]);
+      setWarnings([]);
+
       const formData = new FormData();
-      formData.append("platform", "Amazon")
       formData.append('file', file);
-      if (needsSeller) {
-        formData.append('seller_id', sellerId);
-      }
-      if (needsDateRange) {
-        formData.append('range_start', rangeStart || '');
-        formData.append('range_end', rangeEnd || '');
-        formData.append('range_label', rangePreset);
-        localStorage.setItem(`rangePreset:${tableType}`, rangePreset);
-      }
-      if (needsAdType) {
-        formData.append('ad_type', adType);
-        localStorage.setItem('adType', adType);
-      }
-      if (needsPlatform) {
-        formData.append('platform_id', platformId);
-      }
-      if (needsSnapshotDate) {
-        formData.append('snapshot_date', snapshotDate);
-      }
 
-      const response = await axios.post(
-        `${API_BASE_URL}/api/upload/${tableType}`,
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-          onUploadProgress: (progressEvent) => {
-            // Could show progress here
-          },
-        }
-      );
+      if (needsSeller) formData.append('seller_id', sellerId);
+      if (needsPlatform) formData.append('platform', platform);
+      if (needsSnapshotDate) formData.append('snapshot_date', snapshotDate);
+      if (needsAdType) formData.append('ad_type', adType);
 
-      // Check if response indicates success
-      if (response.data && response.data.success !== false) {
-        const rowCount = response.data.rowCount || 0;
-        const errorRowCount = response.data.errorRowCount || 0;
-        const errorRows = response.data.errorRows || [];
-        if (errorRowCount > 0 && errorRows.length > 0) {
-          const errorLines = errorRows.map(err => `Row ${err.rowNum}: ${err.error}`);
+      const res = await api.post(uploadUrl, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (res.data.success) {
+
+        if (res.data.missingSkus?.length) {
           setWarnings([
-            `Imported with ${errorRowCount} errors. Showing first ${errorRows.length}:`,
-            ...errorLines
+            `Missing SKUs (${res.data.missingSkus.length})`,
+            ...res.data.missingSkus.slice(0, 20)
           ]);
-          alert(`⚠️ Imported ${rowCount} rows with errors`);
-          onSuccess?.();
-          return;
         }
-        setWarnings([]);
-        alert(`✅ Successfully imported ${rowCount} rows`);
-        onSuccess?.();
+
+        onSuccess?.(`Imported ${res.data.rowCount || 0} rows`);
         handleClose();
+
       } else {
-        // Backend returned success: false or error
-        const errorMessage = response.data?.message || response.data?.error || 'Import failed';
-        const errorRows = response.data?.errorRows || [];
-        const errorLines = errorRows.map(err => `Row ${err.rowNum}: ${err.error}`);
-        setErrors([errorMessage, ...errorLines]);
+        setErrors([res.data.error || 'Import failed']);
       }
 
     } catch (err) {
-      console.error('Import error:', err);
-      
-      // Handle different error types
-      let errorMessage = 'Could not import file';
-      
-      if (err.response) {
-        // Backend responded with error status
-        errorMessage = err.response.data?.message || 
-                      err.response.data?.error || 
-                      `Server error: ${err.response.status} ${err.response.statusText}`;
-      } else if (err.request) {
-        // Request was made but no response received
-        errorMessage = 'No response from server. Please check if the backend is running.';
-      } else {
-        // Something else happened
-        errorMessage = err.message || 'Could not import file';
-      }
-      
-      setErrors([errorMessage]);
+      setErrors([err.response?.data?.error || err.message]);
     } finally {
       setImporting(false);
     }
   };
 
+  /* ---------------- close ---------------- */
+
   const handleClose = () => {
-    setFile(null);
-    setParsedData(null);
-    setErrors([]);
-    setWarnings([]);
-    setSellerId('');
-    setSellerError('');
-    setPlatformId('');
-    setPlatformError('');
-    setAdType('');
-    setSnapshotDate('');
-    setRangePreset('month');
-    setCustomStart('');
-    setCustomEnd('');
-    setRangeStart('');
-    setRangeEnd('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
     onClose();
+    setErrorRows([]);
   };
 
-  const getPreviewHeaders = () => {
-    if (!parsedData || !parsedData.items.length) return [];
-    // Get headers from first item keys
-    return Object.keys(parsedData.items[0]).filter(key => key !== 'rowNumber');
-  };
-
-  const formatExcelSerialDate = (value) => {
-    const num = Number(value);
-    if (Number.isNaN(num)) return null;
-    const excelEpoch = Date.UTC(1899, 11, 30);
-    const date = new Date(excelEpoch + Math.round(num) * 86400000);
-    const yyyy = date.getUTCFullYear();
-    const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(date.getUTCDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  };
-
-  const formatCellValue = (value, key) => {
-    if (value === null || value === undefined || value === '') return '—';
-    const keyLower = String(key || '').toLowerCase();
-    const isDateLike = keyLower.includes('date') || keyLower.includes('period') || keyLower.includes('snapshot');
-    if (isDateLike) {
-      const asString = String(value).trim();
-      if (/^\d+(\.\d+)?$/.test(asString)) {
-        const converted = formatExcelSerialDate(asString);
-        return converted || asString;
-      }
-      return asString;
-    }
-    if (key.includes('qty') || key.includes('units') || key.includes('count')) {
-      const num = Number(value);
-      return isNaN(num) ? value : num;
-    }
-    if (key.includes('revenue') || key.includes('spend')) {
-      const num = Number(value);
-      return isNaN(num) ? value : num.toLocaleString();
-    }
-    if (key.includes('rating')) {
-      const num = Number(value);
-      return isNaN(num) ? value : num.toFixed(2);
-    }
-    return String(value);
-  };
+  /* ---------------- UI ---------------- */
 
   return (
     <div className="import-modal-overlay">
       <div className="import-modal-container">
         <div className="import-modal-content">
+
           <div className="import-modal-header">
-            <h2 className="import-modal-title">
-              Import {tableType.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-            </h2>
-            <button
-              onClick={handleClose}
-              className="import-modal-close"
-              disabled={importing}
-            >
-              ×
-            </button>
+            <h2 className="import-modal-title">Import {title}</h2>
+            <button className="import-modal-close" onClick={handleClose}>×</button>
           </div>
 
-          {needsSeller && (
-            <div className="import-modal-section">
-              <label className="import-modal-label">Select Seller</label>
-              <select
-                className="import-modal-file-input"
-                value={sellerId}
-                onChange={(e) => {setSellerId(e.target.value)}}
-                disabled={importing || sellersLoading}
-              >
-                <option value="">Select a seller</option>
-                {sellers.map(s => (
-                  <option key={s.seller_id} value={s.seller_id}>
-                    {s.name} {s.platform_name ? `(${s.platform_name})` : ''}
-                  </option>
-                ))}
-              </select>
-              {!sellersLoading && !sellerError && (
-                <p className="import-modal-help-text">
-                  Sales and inventory imports are stored under this seller.
-                </p>
-              )}
-              {sellersLoading && (
-                <p className="import-modal-help-text">Loading sellers…</p>
-              )}
-              {sellerError && (
-                <p className="import-modal-help-text">{sellerError}</p>
-              )}
-            </div>
-          )}
-
+          {/* Platform */}
           {needsPlatform && (
             <div className="import-modal-section">
-              <label className="import-modal-label">Select Platform</label>
+              <label className="import-modal-label">Platform</label>
+
               <select
                 className="import-modal-file-input"
-                value={platformId}
-                onChange={(e) => setPlatformId(e.target.value)}
-                disabled={importing || platformsLoading}
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value)}
+                disabled={platformLoading}
               >
-                <option value="">Select a platform</option>
+                <option value="">Select platform</option>
                 {platforms.map(p => (
-                  <option key={p.platform_id} value={p.platform_id}>
+                  <option key={p.platform_id} value={p.name}>
                     {p.name}
                   </option>
                 ))}
               </select>
-              {platformsLoading && (
-                <p className="import-modal-help-text">Loading platforms…</p>
-              )}
-              {platformError && (
-                <p className="import-modal-help-text">{platformError}</p>
-              )}
+
+              {platformLoading && <p className="import-modal-help-text">Loading...</p>}
+              {platformError && <p className="import-modal-help-text">{platformError}</p>}
             </div>
           )}
 
+          {/* Snapshot Date */}
           {needsSnapshotDate && (
             <div className="import-modal-section">
               <label className="import-modal-label">Snapshot Date</label>
+
               <input
                 type="date"
                 className="import-modal-file-input"
                 value={snapshotDate}
                 onChange={(e) => setSnapshotDate(e.target.value)}
-                disabled={importing}
               />
+
+              {!snapshotDate && (
+                <p className="import-modal-help-text">
+                  Select snapshot date for this data
+                </p>
+              )}
             </div>
           )}
 
-          {needsAdType && (
+          {/* Seller */}
+          {needsSeller && (
             <div className="import-modal-section">
-              <label className="import-modal-label">Ad Type</label>
+              <label className="import-modal-label">Seller</label>
+
               <select
                 className="import-modal-file-input"
-                value={adType}
-                onChange={(e) => setAdType(e.target.value)}
-                disabled={importing}
+                value={sellerId}
+                onChange={(e) => setSellerId(e.target.value)}
+                disabled={sellerLoading || (needsPlatform && !platform)}
               >
-                <option value="">Select Ad Type</option>
-                <option value="sp">Sponsored Products (sp)</option>
-                <option value="sd">Sponsored Display (sd)</option>
+                <option value="">Select seller</option>
+
+                {filteredSellers.map(s => (
+                  <option key={s.seller_id} value={s.seller_id}>
+                    {s.name}
+                  </option>
+                ))}
               </select>
+
+              {sellerLoading && <p className="import-modal-help-text">Loading...</p>}
+              {sellerError && <p className="import-modal-help-text">{sellerError}</p>}
             </div>
           )}
 
-          {needsDateRange && (
-            <div className="import-modal-section">
-              <label className="import-modal-label">Data Range</label>
-              <div className="import-modal-range">
-                <select
-                  className="import-modal-file-input"
-                  value={rangePreset}
-                  onChange={(e) => {
-                    const preset = e.target.value;
-                    setRangePreset(preset);
-                    if (preset !== 'custom') {
-                      const { start, end } = getPresetRange(preset);
-                      setRangeStart(start);
-                      setRangeEnd(end);
-                      setCustomStart('');
-                      setCustomEnd('');
-                    }
-                  }}
-                  disabled={importing}
-                >
-                  <option value="month">This Month</option>
-                  <option value="yesterday">Yesterday</option>
-                  <option value="last7">Last 7 Days</option>
-                  <option value="custom">Custom</option>
-                </select>
-                {rangePreset === 'custom' && (
-                  <div className="import-modal-range-custom">
-                    <input
-                      type="date"
-                      value={customStart}
-                      onChange={(e) => {
-                        setCustomStart(e.target.value);
-                        setRangeStart(e.target.value);
-                      }}
-                      disabled={importing}
-                    />
-                    <span>to</span>
-                    <input
-                      type="date"
-                      value={customEnd}
-                      onChange={(e) => {
-                        setCustomEnd(e.target.value);
-                        setRangeEnd(e.target.value);
-                      }}
-                      disabled={importing}
-                    />
-                  </div>
-                )}
-              </div>
-              <p className="import-modal-help-text">
-                Selected range: {rangeStart || '—'} → {rangeEnd || '—'}
-              </p>
-            </div>
-          )}
-
-          {/* File Upload */}
+          {/* File */}
           <div className="import-modal-section">
             <div className="import-modal-section-header">
-              <label className="import-modal-label">Select Excel File</label>
-              <button
-                onClick={() => downloadTemplate(tableType)}
-                className="import-modal-download-btn"
-                type="button"
-              >
-                📥 Download Template
+              <label className="import-modal-label">Excel File</label>
+              <button className="import-modal-download-btn" onClick={downloadTemplate}>
+                📥 Template
               </button>
             </div>
+
             <input
               ref={fileInputRef}
               type="file"
               accept=".xlsx,.xls"
               onChange={handleFileSelect}
               className="import-modal-file-input"
-              disabled={importing}
             />
-            {template && (
+
+            {file && (
               <p className="import-modal-help-text">
-                {template.description}
+                Selected: {file.name}
               </p>
             )}
           </div>
@@ -671,12 +480,67 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
           {/* Errors */}
           {errors.length > 0 && (
             <div className="import-modal-error">
-              <strong>Errors:</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <strong>Errors:</strong>
+
+                {errorRows.length > 0 && (
+                  <button
+                    className="import-modal-download-btn"
+                    onClick={downloadErrorFile}
+                  >
+                    ⬇ Download Errors
+                  </button>
+                )}
+              </div>
+
               <ul className="import-modal-error-list">
-                {errors.map((err, idx) => (
-                  <li key={idx}>{err}</li>
+                {errors.slice(0, 10).map((e, i) => (
+                  <li key={i}>{e}</li>
                 ))}
               </ul>
+
+              {errors.length > 10 && (
+                <div className="import-modal-help-text">
+                  Showing first 10 of {errors.length} errors
+                </div>
+              )}
+            </div>
+          )}
+
+          {/*Parse Data*/}
+          {parsedData && (
+            <div className="import-modal-section">
+              <h3 className="import-modal-preview-title">
+                Preview (First 10 Rows)
+              </h3>
+
+              <div className="import-modal-preview-container">
+                <table className="import-modal-preview-table">
+                  <thead>
+                    <tr>
+                      {Object.keys(parsedData.items[0]).map(col => (
+                        <th key={col}>{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {parsedData.items.slice(0, 10).map((row, i) => (
+                      <tr key={i}>
+                        {Object.keys(parsedData.items[0]).map(col => (
+                          <td key={col}>{row[col]}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {parsedData.items.length > 10 && (
+                  <div className="import-modal-preview-more">
+                    Showing first 10 of {parsedData.items.length} rows
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -684,68 +548,29 @@ export default function ImportModal({ open, onClose, tableType, onSuccess }) {
           {warnings.length > 0 && (
             <div className="import-modal-warning">
               <strong>Warnings:</strong>
-              <ul className="import-modal-warning-list">
-                {warnings.map((warn, idx) => (
-                  <li key={idx}>{warn}</li>
-                ))}
+              <ul>
+                {warnings.map((w, i) => <li key={i}>{w}</li>)}
               </ul>
-            </div>
-          )}
-
-          {/* Preview */}
-          {parsedData && parsedData.items.length > 0 && (
-            <div className="import-modal-section">
-              <h3 className="import-modal-preview-title">
-                Preview ({parsedData.items.length} rows)
-              </h3>
-              <div className="import-modal-preview-container">
-                <table className="import-modal-preview-table">
-                  <thead>
-                    <tr>
-                      {getPreviewHeaders().map((header, idx) => (
-                        <th key={idx}>{header.replace(/([A-Z])/g, ' $1').trim()}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {parsedData.items.slice(0, 20).map((item, idx) => (
-                      <tr key={idx}>
-                        {getPreviewHeaders().map((key) => (
-                          <td key={key}>{formatCellValue(item[key], key)}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {parsedData.items.length > 20 && (
-                  <div className="import-modal-preview-more">
-                    ... and {parsedData.items.length - 20} more rows
-                  </div>
-                )}
-              </div>
             </div>
           )}
 
           {/* Actions */}
           <div className="import-modal-actions">
-            <button
-              onClick={handleClose}
-              className="import-modal-btn import-modal-btn-cancel"
-              disabled={importing}
-            >
+            <button className="import-modal-btn import-modal-btn-cancel" onClick={handleClose}>
               Cancel
             </button>
+
             <button
-              onClick={handleImport}
-              disabled={!parsedData || importing || (needsSeller && !sellerId)}
               className="import-modal-btn import-modal-btn-primary"
+              onClick={handleImport}
+              disabled={importing}
             >
-              {importing ? 'Importing...' : `Import ${parsedData?.items.length || 0} Rows`}
+              {importing ? 'Importing...' : 'Import'}
             </button>
           </div>
+
         </div>
       </div>
     </div>
   );
 }
-

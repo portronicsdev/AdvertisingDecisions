@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import { api } from '../services/api';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+/* ---------------- helpers ---------------- */
 
 const formatDate = (value) => {
   if (!value) return '-';
@@ -23,90 +23,133 @@ export default function DataPage({
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
   const [pageSize, setPageSize] = useState(25);
   const [pageIndex, setPageIndex] = useState(0);
+
   const [lastUpload, setLastUpload] = useState(null);
   const [search, setSearch] = useState('');
 
   const offset = pageIndex * pageSize;
   const totalPages = Math.max(Math.ceil(count / pageSize), 1);
 
+  /* ---------------- fetch data ---------------- */
+
   useEffect(() => {
     let isActive = true;
+
     const fetchData = async () => {
       try {
         setLoading(true);
         setError('');
-        const query = new URLSearchParams({
-          limit: String(pageSize),
-          offset: String(offset)
-        });
+
+        const params = {
+          limit: pageSize,
+          offset
+        };
+
         if (search.trim()) {
-          query.append('search', search.trim());
+          params.search = search.trim();
         }
-        const response = await axios.get(
-          `${API_BASE_URL}/api/data/${tableType}?${query.toString()}`
-        );
+
+        const res = await api.get(`/api/data/${tableType}`, params);
+
         if (!isActive) return;
-        setRows(response.data?.rows || []);
-        setCount(response.data?.count || 0);
+
+        setRows(res.data?.rows || []);
+        setCount(res.data?.count || 0);
+
       } catch (err) {
         if (!isActive) return;
-        const message = err.response?.data?.message || 'Failed to fetch data';
+
+        const message =
+          err.response?.data?.message ||
+          err.message ||
+          'Failed to fetch data';
+
         setError(message);
+
+        // reset page if out of bounds
         if (pageIndex > 0) {
           setPageIndex(0);
         }
+
       } finally {
         if (isActive) setLoading(false);
       }
     };
+
     fetchData();
+
     return () => {
       isActive = false;
     };
   }, [tableType, pageSize, offset, refreshKey, search]);
 
+  /* ---------------- fix page overflow ---------------- */
+
   useEffect(() => {
     if (count === 0) return;
+
     const maxIndex = Math.max(Math.ceil(count / pageSize) - 1, 0);
+
     if (pageIndex > maxIndex) {
       setPageIndex(maxIndex);
     }
   }, [count, pageIndex, pageSize]);
 
+  /* ---------------- fetch last upload ---------------- */
+
   useEffect(() => {
     let isActive = true;
+
     const fetchUpload = async () => {
       try {
-        const response = await axios.get(
-          `${API_BASE_URL}/api/uploads/latest?tableType=${tableType}`
-        );
+        const res = await api.get('/api/uploads/latest', {
+          tableType
+        });
+
         if (!isActive) return;
-        setLastUpload(response.data?.latest || null);
-      } catch (err) {
+
+        setLastUpload(res.data?.latest || null);
+
+      } catch {
         if (!isActive) return;
         setLastUpload(null);
       }
     };
+
     fetchUpload();
+
     return () => {
       isActive = false;
     };
   }, [tableType, refreshKey]);
 
+  /* ---------------- derived ---------------- */
+
   const lastUploadText = useMemo(() => {
     if (!lastUpload) return 'No uploads yet';
+
     const range = lastUpload.range_start && lastUpload.range_end
       ? `${lastUpload.range_start} → ${lastUpload.range_end}`
       : 'Range not set';
-    const label = lastUpload.range_label ? `(${lastUpload.range_label})` : '';
+
+    const label = lastUpload.range_label
+      ? `(${lastUpload.range_label})`
+      : '';
+
     const when = formatDate(lastUpload.created_at);
+
     return `${range} ${label} • ${when}`;
   }, [lastUpload]);
 
+  /* ---------------- render ---------------- */
+
   return (
     <div className="page">
+
+      {/* HEADER */}
       <div className="page-header">
         <div>
           <h2>{title}</h2>
@@ -114,17 +157,25 @@ export default function DataPage({
             Total: {count} • Last upload: {lastUploadText}
           </div>
         </div>
+
         <div className="page-actions">
           {headerActions}
+
           {showUpload && (
-            <button className="btn btn-primary" onClick={() => onOpenImport(tableType)}>
+            <button
+              className="btn btn-primary"
+              onClick={() => onOpenImport(tableType)}
+            >
               Upload {title}
             </button>
           )}
         </div>
       </div>
 
+      {/* CONTROLS */}
       <div className="page-controls">
+
+        {/* SEARCH */}
         <div className="search-box">
           <input
             type="text"
@@ -136,6 +187,8 @@ export default function DataPage({
             }}
           />
         </div>
+
+        {/* PAGINATION */}
         <div className="pagination">
           <button
             className="btn btn-secondary"
@@ -144,9 +197,11 @@ export default function DataPage({
           >
             Prev
           </button>
+
           <span className="page-info">
             Page {pageIndex + 1} of {totalPages}
           </span>
+
           <button
             className="btn btn-secondary"
             disabled={pageIndex + 1 >= totalPages}
@@ -155,6 +210,8 @@ export default function DataPage({
             Next
           </button>
         </div>
+
+        {/* PAGE SIZE */}
         <div className="page-size">
           <label>Rows</label>
           <select
@@ -165,17 +222,26 @@ export default function DataPage({
             }}
           >
             {[25, 50, 100].map(size => (
-              <option key={size} value={size}>{size}</option>
+              <option key={size} value={size}>
+                {size}
+              </option>
             ))}
           </select>
         </div>
+
       </div>
 
+      {/* TABLE */}
       <div className="table-card">
+
         {loading ? (
-          <div className="loading">Loading {title.toLowerCase()}...</div>
+          <div className="loading">
+            Loading {title.toLowerCase()}...
+          </div>
         ) : error ? (
-          <div className="error">{error}</div>
+          <div className="error">
+            {error}
+          </div>
         ) : (
           <table className="data-table">
             <thead>
@@ -185,6 +251,7 @@ export default function DataPage({
                 ))}
               </tr>
             </thead>
+
             <tbody>
               {rows.length === 0 ? (
                 <tr>
@@ -197,7 +264,9 @@ export default function DataPage({
                   <tr key={row.id || row.product_platform_id || idx}>
                     {columns.map(col => (
                       <td key={col.key}>
-                        {col.render ? col.render(row) : (row[col.key] ?? '-')}
+                        {col.render
+                          ? col.render(row)
+                          : (row[col.key] ?? '-')}
                       </td>
                     ))}
                   </tr>
@@ -206,6 +275,7 @@ export default function DataPage({
             </tbody>
           </table>
         )}
+
       </div>
     </div>
   );
